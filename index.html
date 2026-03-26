@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RW5 Point Renamer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+        #dropZone {
+            border: 2px dashed #4CAF50;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+            background-color: #f9f9f9;
+            font-size: 18px;
+            cursor: pointer;
+        }
+        #dropZone.hover {
+            background-color: #e1f5e1;
+        }
+        #controls {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            margin: 15px 0;
+        }
+        #textControls {
+            display: flex;
+            flex-direction: column;
+        }
+        #gridContainer {
+            display: inline-block;
+        }
+        #grid {
+            border-collapse: collapse;
+            width: 300px;
+            font-size: 12px;
+        }
+        #grid th, #grid td {
+            border: 1px solid #ddd;
+            padding: 4px;
+            text-align: left;
+        }
+        #grid th {
+            background-color: #f4f4f4;
+        }
+        #fileContents {
+            white-space: pre-wrap;
+            background-color: #f4f4f4;
+            border: 1px solid #ddd;
+            padding: 10px;
+            overflow: auto;
+            max-height: 400px;
+            font-family: monospace;
+        }
+        .highlight {
+            font-weight: bold;
+            color: red;
+        }
+    </style>
+</head>
+<body>
+    <h1>RW5 Point Renamer</h1>
+    <p>
+        Drop a fieldbook file into the drag and drop box. This will extract all points after PN, OP, BP, and FP.
+        Use the dropdown or text box to update point names. Click <strong>Export Updated File</strong> to download
+        the modified RW5 with a change log prepended.<br>
+        <em>All data remains in your browser — no files are uploaded to any server.</em>
+    </p>
+
+    <div id="dropZone">
+        Drag and drop an RW5 file here or click to upload
+        <input type="file" id="fileInput" accept=".rw5,.RW5" style="display: none;">
+    </div>
+
+    <div id="controls">
+        <div id="textControls">
+            <select id="pointSelector">
+                <option value="">Select a Point</option>
+            </select>
+            <input type="text" id="newPointName" placeholder="Enter new point name">
+            <button id="renameButton">Rename Point</button>
+            <button id="exportButton">Export Updated File</button>
+        </div>
+        <div id="gridContainer">
+            <table id="grid">
+                <thead>
+                    <tr>
+                        <th>Old Point Name</th>
+                        <th>New Point Name</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div id="fileContents">File contents will appear here...</div>
+
+    <script>
+        const fileInput = document.getElementById('fileInput');
+        const dropZone = document.getElementById('dropZone');
+        const fileContents = document.getElementById('fileContents');
+        const pointSelector = document.getElementById('pointSelector');
+        const newPointNameInput = document.getElementById('newPointName');
+        const renameButton = document.getElementById('renameButton');
+        const exportButton = document.getElementById('exportButton');
+        const gridBody = document.querySelector("#grid tbody");
+
+        let fileContent = "";   // Current (working) file content
+        let pointData = [];     // Array of [oldName, newName] pairs
+        let sortedPoints = [];  // Sorted list of original point names
+        let currentIndex = 0;  // Tracks which point is active
+        let fileName = "";      // Original uploaded file name
+
+        // --- Event Listeners ---
+
+        pointSelector.addEventListener('change', () => {
+            newPointNameInput.value = pointSelector.value;
+        });
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', handleFileUpload);
+
+        dropZone.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            dropZone.classList.add('hover');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('hover');
+        });
+
+        dropZone.addEventListener('drop', (event) => {
+            event.preventDefault();
+            dropZone.classList.remove('hover');
+            const file = event.dataTransfer.files[0];
+            if (file && file.name.toLowerCase().endsWith('.rw5')) {
+                handleFileUpload({ target: { files: [file] } });
+            } else {
+                alert("Please drop a valid .rw5 file.");
+            }
+        });
+
+        renameButton.addEventListener('click', renamePoint);
+
+        newPointNameInput.addEventListener('keydown', (event) => {
+            if (event.key === "Enter") {
+                event.preventDefault();
+                renamePoint();
+            }
+        });
+
+        newPointNameInput.addEventListener('focus', () => {
+            newPointNameInput.select();
+        });
+
+        exportButton.addEventListener('click', exportFile);
+
+        // --- Core Functions ---
+
+        function handleFileUpload(event) {
+            const file = event.target.files[0];
+            if (!file || !file.name.toLowerCase().endsWith('.rw5')) {
+                alert("Please upload a valid .rw5 file.");
+                return;
+            }
+
+            fileName = file.name;
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                fileContent = e.target.result;
+                fileContents.textContent = fileContent;
+
+                const pointNames = extractAllPointNames(fileContent);
+                populatePointDropdown(pointNames);
+                pointData = pointNames.map((point) => [point, point]);
+                updateGrid();
+            };
+
+            reader.onerror = function() {
+                alert("Error reading file.");
+            };
+
+            reader.readAsText(file);
+        }
+
+        function extractAllPointNames(content) {
+            const prefixes = ['PN', 'BP', 'FP', 'OP'];
+            const pointNames = new Set();
+
+            prefixes.forEach((prefix) => {
+                const regex = new RegExp(`,${prefix}([A-Za-z0-9]+),`, 'g');
+                let match;
+                while ((match = regex.exec(content)) !== null) {
+                    pointNames.add(match[1]);
+                }
+            });
+
+            return Array.from(pointNames).sort((a, b) =>
+                a.localeCompare(b, undefined, { numeric: true })
+            );
+        }
+
+        function populatePointDropdown(points) {
+            sortedPoints = points.sort((a, b) =>
+                a.localeCompare(b, undefined, { numeric: true })
+            );
+
+            pointSelector.innerHTML = '<option value="">Select a Point</option>';
+            sortedPoints.forEach((point) => {
+                const option = document.createElement('option');
+                option.value = point;
+                option.textContent = point;
+                pointSelector.appendChild(option);
+            });
+
+            if (sortedPoints.length > 0) {
+                pointSelector.value = sortedPoints[0];
+                newPointNameInput.value = sortedPoints[0];
+            }
+        }
+
+        function renamePoint() {
+            const selectedPoint = pointSelector.value;
+            const newPointName = newPointNameInput.value.trim();
+
+            if (!selectedPoint || !newPointName) {
+                alert("Please select a point and enter a new name.");
+                return;
+            }
+
+            const pointIndex = pointData.findIndex((point) => point[0] === selectedPoint);
+            if (pointIndex !== -1) {
+                pointData[pointIndex][1] = newPointName;
+                updateFileContent();
+                updateGrid();
+
+                currentIndex = (pointIndex + 1) % sortedPoints.length;
+                pointSelector.value = sortedPoints[currentIndex];
+                newPointNameInput.value = sortedPoints[currentIndex];
+                newPointNameInput.select();
+            }
+        }
+
+        function updateFileContent() {
+            let updatedContent = fileContent;
+
+            pointData.forEach(([oldName, newName]) => {
+                if (newName) {
+                    [',PN', ',OP', ',BP', ',FP'].forEach((code) => {
+                        const regex = new RegExp(`${code}${oldName},`, 'g');
+                        updatedContent = updatedContent.replace(regex, `${code}${newName},`);
+                    });
+                }
+            });
+
+            fileContent = updatedContent;
+            refreshViewport();
+        }
+
+        function refreshViewport() {
+            const highlightedContent = fileContent.replace(/,([A-Za-z0-9]+),/g, (match, p1) => {
+                if (pointData.some(([_, newName]) => newName === p1)) {
+                    return `<span class="highlight">${match}</span>`;
+                }
+                return match;
+            });
+            fileContents.innerHTML = highlightedContent;
+        }
+
+        function updateGrid() {
+            gridBody.innerHTML = "";
+            pointData.forEach(([oldName, newName]) => {
+                const row = document.createElement("tr");
+                const oldCell = document.createElement("td");
+                const newCell = document.createElement("td");
+                oldCell.textContent = oldName;
+                newCell.textContent = newName;
+                row.appendChild(oldCell);
+                row.appendChild(newCell);
+                gridBody.appendChild(row);
+            });
+        }
+
+        function exportFile() {
+            const header =
+                `-- ESE Quickpoints rw5 Renumbering\n` +
+                `-- www.ese-llc.com\n` +
+                `-- We hope this is a helpful tool. We take no responsibility for errors or omissions caused by this app.\n\n`;
+
+            const changeLog =
+                `-- Old Point Name, New Point Name\n` +
+                pointData.map(([oldName, newName]) => `--${oldName},${newName || oldName}`).join("\n") +
+                "\n\n";
+
+            const updatedFileName = fileName.replace(/\.rw5$/i, '-ESE.rw5');
+            const blob = new Blob([header + changeLog + fileContent], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = updatedFileName;
+            link.click();
+        }
+    </script>
+</body>
+</html>
