@@ -442,62 +442,34 @@
 
         function parseTraversePoints(content) {
             const lines = content.split('\n');
-            const points = {};
+            const points = [];
+            const seen = new Set();
 
-            // First pass: GPS records (GS lines) — lat/lon
+            // SP records: SP,PNxxx,N xxxxxxx.xxxx,E xxxxxxx.xxxx,EL xx.xxxx,--DESC
             lines.forEach(line => {
                 line = line.trim();
-                if (line.startsWith('GS,')) {
-                    const pn = getField(line, 'PN');
-                    const lat = getField(line, 'LA');
-                    const lon = getField(line, 'LN');
-                    if (pn && lat && lon) {
-                        if (!points[pn]) {
-                            points[pn] = { name: pn, lat: parseFloat(lat), lon: parseFloat(lon) };
+                if (line.startsWith('SP,')) {
+                    // Extract point name from PN field
+                    const pnMatch = line.match(/,PN([^,]+),/);
+                    // Extract N and E values
+                    const nMatch = line.match(/,N\s*([\d.]+)/);
+                    const eMatch = line.match(/,E\s*([\d.]+)/);
+
+                    if (pnMatch && nMatch && eMatch) {
+                        const name = pnMatch[1].trim();
+                        const n = parseFloat(nMatch[1]);
+                        const e = parseFloat(eMatch[1]);
+
+                        if (!seen.has(name) && !isNaN(n) && !isNaN(e)) {
+                            seen.add(name);
+                            // Use E as X axis, N as Y axis (standard survey convention)
+                            points.push({ name, x: e, y: n });
                         }
                     }
                 }
             });
 
-            const gpsPoints = Object.values(points).filter(p => p.lat !== undefined);
-
-            if (gpsPoints.length > 0) {
-                // Convert lat/lon to local XY (approximate, feet)
-                const originLat = gpsPoints[0].lat;
-                const originLon = gpsPoints[0].lon;
-                const latScale = 364000;
-                const lonScale = 364000 * Math.cos(originLat * Math.PI / 180);
-
-                gpsPoints.forEach(p => {
-                    p.x = (p.lon - originLon) * lonScale;
-                    p.y = (p.lat - originLat) * latScale;
-                });
-
-                return gpsPoints;
-            }
-
-            // Fallback: SS/TR records — rough positional spread
-            const ssPoints = [];
-            let idx = 0;
-            lines.forEach(line => {
-                line = line.trim();
-                if (line.startsWith('SS,') || line.startsWith('TR,')) {
-                    const pn = getField(line, 'PN');
-                    const sd = parseFloat(getField(line, 'SD') || '0');
-                    if (pn && sd > 0) {
-                        const angle = (idx * 47) % 360;
-                        const rad = angle * Math.PI / 180;
-                        ssPoints.push({
-                            name: pn,
-                            x: sd * Math.cos(rad),
-                            y: sd * Math.sin(rad)
-                        });
-                        idx++;
-                    }
-                }
-            });
-
-            return ssPoints;
+            return points;
         }
 
         function drawPlot() {
