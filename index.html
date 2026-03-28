@@ -785,14 +785,21 @@
             e.preventDefault();
             const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
 
-            // offsetX/offsetY are relative to the canvas element — always correct
-            const mouseX = e.offsetX * (plotCanvas.width / plotCanvas.offsetWidth);
-            const mouseY = e.offsetY * (plotCanvas.height / plotCanvas.offsetHeight);
+            // Scale offsetX/offsetY from CSS pixels to canvas pixels
+            const scaleX = plotCanvas.width / plotCanvas.offsetWidth;
+            const scaleY = plotCanvas.height / plotCanvas.offsetHeight;
+            const mouseX = e.offsetX * scaleX;
+            const mouseY = e.offsetY * scaleY;
 
-            // Zoom toward cursor
-            plotCanvas._panX = mouseX + (plotCanvas._panX - mouseX) * zoomFactor;
-            plotCanvas._panY = mouseY + (plotCanvas._panY - mouseY) * zoomFactor;
-            plotCanvas._zoom *= zoomFactor;
+            const newZoom = plotCanvas._zoom * zoomFactor;
+            // Clamp zoom: don't zoom out past the initial fit, or in past 200x
+            const clampedZoom = Math.max(0.5, Math.min(200, newZoom));
+            const clampedFactor = clampedZoom / plotCanvas._zoom;
+
+            // Zoom toward cursor: keep the world point under mouseX/mouseY fixed
+            plotCanvas._panX = mouseX + (plotCanvas._panX - mouseX) * clampedFactor;
+            plotCanvas._panY = mouseY + (plotCanvas._panY - mouseY) * clampedFactor;
+            plotCanvas._zoom = clampedZoom;
 
             redrawPlot();
         }, { passive: false });
