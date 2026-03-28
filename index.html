@@ -359,6 +359,39 @@
                 updateGrid();
 
                 traversePoints = parseTraversePoints(fileContent);
+                recomputeNeighborFlags();
+
+                // --- Console diagnostic dump ---
+                console.log('=== RW5 Parse Results ===');
+                console.log(`File: ${fileName}  |  ${obsStore.length} raw observations  |  ${traversePoints.length} unique points`);
+                console.log('');
+
+                console.log('--- obsStore (all raw observations) ---');
+                console.table(obsStore.map(o => ({
+                    'Old Name':  o.oldName,
+                    'Type':      o.type.toUpperCase(),
+                    'Setup Occ': o.setupOcc || '—',
+                    'N':         o.y  !== null ? o.y.toFixed(4)  : '—',
+                    'E':         o.x  !== null ? o.x.toFixed(4)  : '—',
+                    'Z':         o.z  !== null ? o.z.toFixed(4)  : '—',
+                    'Desc':      o.desc || '',
+                })));
+
+                console.log('');
+                console.log('--- traversePoints (averaged markers) ---');
+                console.table(traversePoints.map(p => ({
+                    'Old Name':  p.name,
+                    'Type':      p.type.toUpperCase(),
+                    'Obs Count': p.obsCount,
+                    'Avg N':     p.y !== null ? p.y.toFixed(4) : '—',
+                    'Avg E':     p.x !== null ? p.x.toFixed(4) : '—',
+                    'Avg Z':     p.z !== null ? p.z.toFixed(4) : '—',
+                    'Neighbor?': p.neighborFlag ? 'RED' : 'green',
+                    'Desc':      p.desc || '',
+                })));
+                console.log('=== End Parse Results ===');
+                // --- End diagnostic dump ---
+
                 plotCanvas._viewInit = false;
                 drawPlot();
             };
@@ -439,7 +472,7 @@
                 pointData[pointIndex][1] = newPointName;
                 updateFileContent();
                 updateGrid();
-                if (traversePoints.length > 0) redrawPlot();
+                if (traversePoints.length > 0) { recomputeNeighborFlags(); redrawPlot(); }
 
                 currentIndex = (pointIndex + 1) % sortedPoints.length;
                 pointSelector.value = sortedPoints[currentIndex];
@@ -525,80 +558,89 @@
             return match ? match[1].trim() : null;
         }
 
+        // obsStore: flat array of every raw observation, populated by parseTraversePoints.
+        // Each entry: { oldName, x(E), y(N), z(elev or null), desc, type('sp'|'ss'), setupOcc }
+        let obsStore = [];
+
         function parseTraversePoints(content) {
             const lines = content.split('\n');
-            const coordMap = {}; // name -> {x, y} for COGO lookups
+            const coordMap = {}; // oldName -> { x, y }
+            const elevMap  = {}; // oldName -> elevation (carried forward through traverse)
 
-            // accumulator: name -> { xs: [], ys: [], desc, type }
-            const accumulator = {};
+            obsStore = []; // reset
 
-            function addObs(name, x, y, desc, type) {
-                if (!accumulator[name]) {
-                    accumulator[name] = { xs: [], ys: [], desc, type };
-                }
-                accumulator[name].xs.push(x);
-                accumulator[name].ys.push(y);
-                // Keep first non-empty desc
-                if (!accumulator[name].desc && desc) accumulator[name].desc = desc;
-            }
-
-            // SP records: SP,PNxxx,N xxxxxxx.xxxx,E xxxxxxx.xxxx,EL xx.xxxx,--DESC
-            lines.forEach(line => {
-                line = line.trim();
-                if (line.startsWith('SP,')) {
-                    const parts = line.split(',');
-                    if (!parts[1] || !parts[1].startsWith('PN')) return;
-                    const name = parts[1].substring(2).trim();
-
-                    const nMatch = line.match(/,N\s*([\d.]+)/);
-                    const eMatch = line.match(/,E\s*([\d.]+)/);
-
-                    if (nMatch && eMatch) {
-                        const n = parseFloat(nMatch[1]);
-                        const e = parseFloat(eMatch[1]);
-                        const descMatch = line.match(/,--([^,\r\n]+)/);
-                        const desc = descMatch ? descMatch[1].trim() : '';
-
-                        if (!isNaN(n) && !isNaN(e)) {
-                            coordMap[name] = { x: e, y: n };
-                            addObs(name, e, n, desc, 'sp');
-                        }
-                    }
-                }
-            });
-
-            // COGO: compute SS sideshot coordinates from OC/BK/SS records
-            // Angles in RW5 are DDD.MMSS format
-            function dmsToDecDeg(dms) {
+            // Angle conversion: RW5 DDD.MMSS -> radians
+            function dmsToRad(dms) {
                 const d = Math.floor(Math.abs(dms));
                 const m = Math.floor((Math.abs(dms) - d) * 100);
                 const s = (((Math.abs(dms) - d) * 100) - m) * 100;
-                return (d + m / 60 + s / 3600) * (dms < 0 ? -1 : 1);
+                const deg = (d + m / 60 + s / 3600) * (dms < 0 ? -1 : 1);
+                return deg * Math.PI / 180;
             }
 
-            function dmsToRad(dms) {
-                return dmsToDecDeg(dms) * Math.PI / 180;
-            }
+            // --- Pass 1: seed coordMap and elevMap from all SP records ---
+            lines.forEach(line => {
+                line = line.trim();
+                if (!line.startsWith('SP,')) return;
+                const parts = line.split(',');
+                if (!parts[1] || !parts[1].startsWith('PN')) return;
+                const name = parts[1].substring(2).trim();
 
-            let occName = null, bsName = null;
-            traverseLines = []; // reset lines array
+                const nMatch  = line.match(/,N\s*([\d.]+)/);
+                const eMatch  = line.match(/,E\s*([\d.]+)/);
+                const elMatch = line.match(/,EL\s*([\d.]+)/);
+                const descMatch = line.match(/,--([^,\r\n]+)/);
+
+                if (!nMatch || !eMatch) return;
+                const n = parseFloat(nMatch[1]);
+                const e = parseFloat(eMatch[1]);
+                if (isNaN(n) || isNaN(e)) return;
+
+                const z    = elMatch ? parseFloat(elMatch[1]) : null;
+                const desc = descMatch ? descMatch[1].trim() : '';
+
+                coordMap[name] = { x: e, y: n };
+                if (z !== null && !isNaN(z)) elevMap[name] = z;
+
+                obsStore.push({ oldName: name, x: e, y: n, z: (z !== null && !isNaN(z)) ? z : null, desc, type: 'sp', setupOcc: null });
+            });
+
+            // --- Pass 2: walk records in order for OC/LS/BK/SS ---
+            let occName  = null;
+            let bsName   = null;
+            let currentHI = null;
+            let currentHR = null;
+            traverseLines = [];
 
             lines.forEach(line => {
                 line = line.trim();
 
+                // OC — new instrument setup, reset LS heights
                 if (line.startsWith('OC,')) {
                     const parts = line.split(',');
                     if (parts[1] && parts[1].startsWith('OP')) {
                         occName = parts[1].substring(2).trim();
+                        // Inline coords on OC (if present and not already known)
                         const nMatch = line.match(/,N\s*([\d.]+)/);
                         const eMatch = line.match(/,E\s*([\d.]+)/);
                         if (nMatch && eMatch && !coordMap[occName]) {
                             coordMap[occName] = { x: parseFloat(eMatch[1]), y: parseFloat(nMatch[1]) };
                         }
                     }
-                    bsName = null;
+                    bsName    = null;
+                    currentHI = null;
+                    currentHR = null;
                 }
 
+                // LS — height of instrument and rod for this setup
+                if (line.startsWith('LS,')) {
+                    const hiMatch = line.match(/,HI([\d.]+)/);
+                    const hrMatch = line.match(/,HR([\d.]+)/);
+                    if (hiMatch) currentHI = parseFloat(hiMatch[1]);
+                    if (hrMatch) currentHR = parseFloat(hrMatch[1]);
+                }
+
+                // BK / BD — backsight
                 if (line.startsWith('BK,') || line.startsWith('BD,')) {
                     const parts = line.split(',');
                     if (parts[2] && parts[2].startsWith('BP')) {
@@ -606,16 +648,17 @@
                     }
                 }
 
+                // SS — sideshot
                 if (line.startsWith('SS,')) {
                     if (!occName || !bsName) return;
                     const occ = coordMap[occName];
-                    const bs = coordMap[bsName];
+                    const bs  = coordMap[bsName];
                     if (!occ || !bs) return;
 
-                    const fpMatch = line.match(/,FP([A-Za-z0-9]+),/);
-                    const arMatch = line.match(/,AR([\d.]+)/);
-                    const sdMatch = line.match(/,SD([\d.]+)/);
-                    const zeMatch = line.match(/,ZE([\d.]+)/);
+                    const fpMatch   = line.match(/,FP([A-Za-z0-9]+),/);
+                    const arMatch   = line.match(/,AR([\d.]+)/);
+                    const sdMatch   = line.match(/,SD([\d.]+)/);
+                    const zeMatch   = line.match(/,ZE([\d.]+)/);
                     const descMatch = line.match(/,--([^,\r\n]+)/);
 
                     if (!fpMatch || !arMatch || !sdMatch || !zeMatch) return;
@@ -626,35 +669,101 @@
                     const ze = dmsToRad(parseFloat(zeMatch[1]));
                     const desc = descMatch ? descMatch[1].trim() : '';
 
-                    const hd = sd * Math.sin(ze);
+                    // Horizontal position
+                    const hd   = sd * Math.sin(ze);
                     const azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
                     const azFP = azBS + ar;
-                    const fpN = occ.y + hd * Math.cos(azFP);
-                    const fpE = occ.x + hd * Math.sin(azFP);
+                    const fpN  = occ.y + hd * Math.cos(azFP);
+                    const fpE  = occ.x + hd * Math.sin(azFP);
+                    if (isNaN(fpN) || isNaN(fpE)) return;
 
-                    if (!isNaN(fpN) && !isNaN(fpE)) {
-                        // Update coordMap with latest observation for COGO chaining
-                        coordMap[fpName] = { x: fpE, y: fpN };
-                        addObs(fpName, fpE, fpN, desc, 'ss');
-
-                        // All observation lines are still drawn (shows spread)
-                        traverseLines.push({
-                            x1: occ.x, y1: occ.y,
-                            x2: fpE, y2: fpN,
-                            type: 'ss'
-                        });
+                    // Elevation: Elev(FP) = Elev(OCC) + HI + SD*cos(ZE) - HR
+                    let fpZ = null;
+                    const occElev = elevMap[occName];
+                    if (occElev !== undefined && currentHI !== null && currentHR !== null) {
+                        fpZ = occElev + currentHI + sd * Math.cos(ze) - currentHR;
                     }
+
+                    // Carry forward into maps so chained setups work
+                    coordMap[fpName] = { x: fpE, y: fpN };
+                    if (fpZ !== null) elevMap[fpName] = fpZ;
+
+                    obsStore.push({ oldName: fpName, x: fpE, y: fpN, z: fpZ, desc, type: 'ss', setupOcc: occName });
+
+                    traverseLines.push({ x1: occ.x, y1: occ.y, x2: fpE, y2: fpN, type: 'ss' });
                 }
             });
 
-            // Collapse accumulator: average all observations per point name into one marker
-            const points = Object.entries(accumulator).map(([name, { xs, ys, desc, type }]) => {
-                const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
-                const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
-                return { name, x: avgX, y: avgY, desc, type, obsCount: xs.length };
+            // --- Collapse obsStore into one averaged marker per original point name ---
+            const accumulator = {}; // oldName -> { xs, ys, zs, desc, type }
+            obsStore.forEach(({ oldName, x, y, z, desc, type }) => {
+                if (!accumulator[oldName]) {
+                    accumulator[oldName] = { xs: [], ys: [], zs: [], desc, type };
+                }
+                accumulator[oldName].xs.push(x);
+                accumulator[oldName].ys.push(y);
+                if (z !== null) accumulator[oldName].zs.push(z);
+                if (!accumulator[oldName].desc && desc) accumulator[oldName].desc = desc;
             });
 
+            const points = Object.entries(accumulator).map(([name, { xs, ys, zs, desc, type }]) => {
+                const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
+                const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
+                const avgZ = zs.length > 0 ? zs.reduce((a, b) => a + b, 0) / zs.length : null;
+                return { name, x: avgX, y: avgY, z: avgZ, desc, type, obsCount: xs.length };
+            });
+
+            // neighborFlag computed by recomputeNeighborFlags() after parse
             return points;
+        }
+
+        const PROX_THRESHOLD = 0.1; // feet — used for neighbor-proximity coloring
+
+        // Recompute neighborFlag on all traversePoints based on current names in pointData.
+        // Points that share a name (merged by renaming) are treated as one and never flagged.
+        // Only differently-named points that land within PROX_THRESHOLD of each other turn red.
+        function recomputeNeighborFlags() {
+            if (!traversePoints || traversePoints.length === 0) return;
+
+            // Build a map of current display name -> averaged position
+            // (multiple original names may now share a display name after renaming)
+            const nameToPos = {};
+            traversePoints.forEach(p => {
+                const entry = pointData.find(([oldName]) => oldName === p.name);
+                const displayName = entry ? entry[1] : p.name;
+                if (!nameToPos[displayName]) {
+                    nameToPos[displayName] = { xs: [], ys: [] };
+                }
+                nameToPos[displayName].xs.push(p.x);
+                nameToPos[displayName].ys.push(p.y);
+            });
+
+            // Collapse to averaged positions per display name
+            const named = Object.entries(nameToPos).map(([name, { xs, ys }]) => ({
+                name,
+                x: xs.reduce((a, b) => a + b, 0) / xs.length,
+                y: ys.reduce((a, b) => a + b, 0) / ys.length,
+            }));
+
+            // Find which display names have a neighbor
+            const flaggedNames = new Set();
+            for (let i = 0; i < named.length; i++) {
+                for (let j = i + 1; j < named.length; j++) {
+                    const dx = named[i].x - named[j].x;
+                    const dy = named[i].y - named[j].y;
+                    if (Math.sqrt(dx * dx + dy * dy) < PROX_THRESHOLD) {
+                        flaggedNames.add(named[i].name);
+                        flaggedNames.add(named[j].name);
+                    }
+                }
+            }
+
+            // Apply flags back to traversePoints
+            traversePoints.forEach(p => {
+                const entry = pointData.find(([oldName]) => oldName === p.name);
+                const displayName = entry ? entry[1] : p.name;
+                p.neighborFlag = flaggedNames.has(displayName);
+            });
         }
 
         let traverseLines = []; // lines to draw on map
@@ -755,15 +864,20 @@
                 const entry = pointData.find(([oldName]) => oldName === p.name);
                 const displayName = entry ? entry[1] : p.name;
 
-                const isDuplicate = p.obsCount && p.obsCount > 1;
-                const radius = isDuplicate ? 6 : 5;
+                // Color logic:
+                //   Red    — a DIFFERENT point's averaged position is within 0.1' (unexpected neighbor)
+                //   Green  — solo point, or any intentionally merged/averaged point
+                const isRed = p.neighborFlag;
+                const fillColor  = isRed ? '#E53935' : '#43A047';
+                const strokeColor = isRed ? '#B71C1C' : '#1B5E20';
+                const radius = (p.obsCount && p.obsCount > 1) ? 6 : 5;
 
                 ctx.beginPath();
                 ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-                ctx.fillStyle = p.type === 'ss' ? '#4CAF50' : '#2196F3';
+                ctx.fillStyle = fillColor;
                 ctx.fill();
-                ctx.strokeStyle = isDuplicate ? '#FF5722' : (p.type === 'ss' ? '#2E7D32' : '#1565C0');
-                ctx.lineWidth = isDuplicate ? 2 : 1;
+                ctx.strokeStyle = strokeColor;
+                ctx.lineWidth = 1.5;
                 ctx.stroke();
 
                 // Point name in bold
@@ -771,12 +885,8 @@
                 ctx.font = 'bold 11px Arial';
                 ctx.fillText(displayName, cx + 7, cy - 4);
 
-                // Observation count badge for averaged duplicates, else description
-                if (isDuplicate) {
-                    ctx.fillStyle = '#FF5722';
-                    ctx.font = 'bold 9px Arial';
-                    ctx.fillText('\xD7' + p.obsCount + ' obs', cx + 7, cy + 7);
-                } else if (p.desc) {
+                // Description below (if not crowded by a duplicate badge)
+                if (p.desc) {
                     ctx.fillStyle = '#888';
                     ctx.font = '10px Arial';
                     ctx.fillText(p.desc, cx + 7, cy + 8);
