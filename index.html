@@ -373,15 +373,29 @@
         // --- Point Extraction ---
 
         function extractAllPointNames(content) {
-            const prefixes = ['PN', 'BP', 'FP', 'OP'];
             const pointNames = new Set();
+            const lines = content.split('\n');
 
-            prefixes.forEach((prefix) => {
-                const regex = new RegExp(`,${prefix}([A-Za-z0-9]+),`, 'g');
-                let match;
-                while ((match = regex.exec(content)) !== null) {
-                    pointNames.add(match[1]);
+            lines.forEach(line => {
+                line = line.trim();
+
+                // SP records: SP,PNxxx,N... — point name is 2nd field, starts with PN
+                if (line.startsWith('SP,')) {
+                    const parts = line.split(',');
+                    if (parts[1] && parts[1].startsWith('PN')) {
+                        pointNames.add(parts[1].substring(2).trim());
+                    }
                 }
+
+                // All other records: look for ,OPxxx, ,FPxxx, ,BPxxx, ,PNxxx,
+                const prefixes = ['PN', 'BP', 'FP', 'OP'];
+                prefixes.forEach(prefix => {
+                    const regex = new RegExp(`,${prefix}([A-Za-z0-9]+)(?:,|$)`, 'g');
+                    let match;
+                    while ((match = regex.exec(line)) !== null) {
+                        pointNames.add(match[1]);
+                    }
+                });
             });
 
             return Array.from(pointNames).sort((a, b) =>
@@ -515,14 +529,16 @@
             lines.forEach(line => {
                 line = line.trim();
                 if (line.startsWith('SP,')) {
-                    // Extract point name from PN field
-                    const pnMatch = line.match(/,PN([^,]+),/);
+                    const parts = line.split(',');
+                    // Point name is 2nd field, starts with PN
+                    if (!parts[1] || !parts[1].startsWith('PN')) return;
+                    const name = parts[1].substring(2).trim();
+
                     // Extract N and E values
                     const nMatch = line.match(/,N\s*([\d.]+)/);
                     const eMatch = line.match(/,E\s*([\d.]+)/);
 
-                    if (pnMatch && nMatch && eMatch) {
-                        const name = pnMatch[1].trim();
+                    if (nMatch && eMatch) {
                         const n = parseFloat(nMatch[1]);
                         const e = parseFloat(eMatch[1]);
 
