@@ -106,6 +106,14 @@
             background-color: #1976D2 !important;
         }
 
+        #zoomToPointButton {
+            background-color: #FF9800 !important;
+        }
+
+        #zoomToPointButton:hover {
+            background-color: #F57C00 !important;
+        }
+
         #grid {
             border-collapse: collapse;
             width: 100%;
@@ -206,6 +214,7 @@
                 </select>
                 <input type="text" id="newPointName" placeholder="Enter new point name">
                 <button id="renameButton">Rename Point</button>
+                <button id="zoomToPointButton">Zoom to Point</button>
                 <button id="exportButton">Export Updated File</button>
             </div>
             <table id="grid">
@@ -238,7 +247,9 @@
         const newPointNameInput = document.getElementById('newPointName');
         const renameButton = document.getElementById('renameButton');
         const exportButton = document.getElementById('exportButton');
-        const gridBody = document.querySelector("#grid tbody");
+        const zoomToPointButton = document.getElementById('zoomToPointButton');
+
+
         const plotCanvas = document.getElementById('plotCanvas');
         const plotPlaceholder = document.getElementById('plotPlaceholder');
         const ctx = plotCanvas.getContext('2d');
@@ -295,6 +306,36 @@
         });
 
         exportButton.addEventListener('click', exportFile);
+        zoomToPointButton.addEventListener('click', zoomToPoint);
+
+        function zoomToPoint() {
+            const selectedPoint = pointSelector.value;
+            if (!selectedPoint || traversePoints.length === 0) return;
+
+            const pt = traversePoints.find(p => p.name === selectedPoint);
+            if (!pt) return;
+
+            const W = plotCanvas._W;
+            const H = plotCanvas._H;
+            const pad = plotCanvas._pad;
+            const baseScale = plotCanvas._baseScale;
+
+            // Target: ~20 foot window — close enough to compare duplicate observations
+            const targetFeet = 20;
+            const usableWidth = W - pad * 2;
+            const targetZoom = usableWidth / (targetFeet * baseScale);
+
+            plotCanvas._zoom = targetZoom;
+
+            // Center pan on this point
+            const effectiveScale = baseScale * targetZoom;
+            const ptCanvasX = pad + (pt.x - plotCanvas._minX) * effectiveScale;
+            const ptCanvasY = H - pad - (pt.y - plotCanvas._minY) * effectiveScale;
+            plotCanvas._panX = W / 2 - ptCanvasX;
+            plotCanvas._panY = H / 2 - ptCanvasY;
+
+            redrawPlot();
+        }
 
         // --- File Handling ---
 
