@@ -121,7 +121,7 @@
 
         #plotPlaceholder {
             width: 100%;
-            height: 500px;
+            aspect-ratio: 1 / 1;
             border: 2px solid #ccc;
             background-color: #fafafa;
             display: flex;
@@ -136,7 +136,6 @@
             border: 2px solid #ccc;
             background-color: #fafafa;
             width: 100%;
-            height: 500px;
             display: none;
         }
 
@@ -483,9 +482,10 @@
             plotPlaceholder.style.display = 'none';
             plotCanvas.style.display = 'block';
 
-            // Size canvas to its container
-            plotCanvas.width = plotCanvas.offsetWidth || 600;
-            plotCanvas.height = 500;
+            // Size canvas square — height matches width
+            const canvasWidth = plotCanvas.offsetWidth || 600;
+            plotCanvas.width = canvasWidth;
+            plotCanvas.height = canvasWidth;
 
             const W = plotCanvas.width;
             const H = plotCanvas.height;
