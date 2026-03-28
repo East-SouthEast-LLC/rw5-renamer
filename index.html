@@ -253,6 +253,7 @@
         const ctx = plotCanvas.getContext('2d');
 
         let fileContent = "";
+        let originalFileContent = ""; // never mutated — used as source for all renames
         let pointData = [];
         let sortedPoints = [];
         let currentIndex = 0;
@@ -349,6 +350,7 @@
 
             reader.onload = function(e) {
                 fileContent = e.target.result;
+                originalFileContent = fileContent; // preserve pristine copy
                 fileContents.textContent = fileContent;
 
                 const pointNames = extractAllPointNames(fileContent);
@@ -447,11 +449,12 @@
             }
         }
 
-        function updateFileContent() {
-            let updatedContent = fileContent;
+        function buildRenamedContent() {
+            // Always start from the original file so corrections always win
+            let updatedContent = originalFileContent;
 
             pointData.forEach(([oldName, newName]) => {
-                if (newName) {
+                if (newName && newName !== oldName) {
                     [',PN', ',OP', ',BP', ',FP'].forEach((code) => {
                         const regex = new RegExp(`${code}${oldName},`, 'g');
                         updatedContent = updatedContent.replace(regex, `${code}${newName},`);
@@ -459,7 +462,11 @@
                 }
             });
 
-            fileContent = updatedContent;
+            return updatedContent;
+        }
+
+        function updateFileContent() {
+            fileContent = buildRenamedContent();
             refreshViewport();
         }
 
@@ -503,7 +510,7 @@
                 "\n\n";
 
             const updatedFileName = fileName.replace(/\.rw5$/i, '-ESE.rw5');
-            const blob = new Blob([header + changeLog + fileContent], { type: 'text/plain' });
+            const blob = new Blob([header + changeLog + buildRenamedContent()], { type: 'text/plain' });
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
             link.download = updatedFileName;
