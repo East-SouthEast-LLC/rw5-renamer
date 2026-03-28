@@ -187,6 +187,109 @@
             font-weight: bold;
             color: red;
         }
+
+        /* ── Point Detail Modal ── */
+        #modalOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        #modalOverlay.active {
+            display: flex;
+        }
+        #modalPanel {
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+            padding: 18px 20px 14px;
+            min-width: 640px;
+            max-width: 90vw;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 13px;
+        }
+        #modalTitle {
+            font-size: 15px;
+            font-weight: bold;
+            color: #333;
+            margin: 0;
+        }
+        #modalTable {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 12px;
+        }
+        #modalTable th {
+            background: #f4f4f4;
+            border: 1px solid #ddd;
+            padding: 4px 6px;
+            text-align: center;
+            white-space: nowrap;
+        }
+        #modalTable td {
+            border: 1px solid #ddd;
+            padding: 4px 6px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        #modalTable td.name-cell {
+            text-align: left;
+        }
+        #modalTable tr.avg-row td {
+            background: #f9f9e8;
+            font-weight: bold;
+        }
+        #modalTable tr.flagged td {
+            background: #fff0f0;
+        }
+        .delta-pos { color: #1565C0; }
+        .delta-neg { color: #B71C1C; }
+        #modalMergeBar {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            border-top: 1px solid #eee;
+            padding-top: 8px;
+        }
+        #modalMergeBar label { font-weight: bold; }
+        #mergeNameSelect {
+            padding: 3px 6px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        #modalMergeBtn {
+            padding: 4px 14px;
+            background: #4CAF50;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        #modalMergeBtn:hover { background: #388E3C; }
+        #modalCloseBtn {
+            padding: 4px 14px;
+            background: #9E9E9E;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        #modalCloseBtn:hover { background: #616161; }
+        #modalStatus {
+            font-size: 12px;
+            color: #555;
+            font-style: italic;
+        }
     </style>
 </head>
 <body>
@@ -238,6 +341,39 @@
     </div>
 
     <div id="fileContents">File contents will appear here...</div>
+
+    <!-- Point Detail Modal -->
+    <div id="modalOverlay">
+        <div id="modalPanel">
+            <div id="modalTitle">Point Detail</div>
+            <div style="overflow-y:auto; flex:1 1 auto;">
+                <table id="modalTable">
+                    <thead>
+                        <tr>
+                            <th>✓</th>
+                            <th>Old Name</th>
+                            <th>New Name</th>
+                            <th>N</th>
+                            <th>E</th>
+                            <th>Z</th>
+                            <th>ΔN</th>
+                            <th>ΔE</th>
+                            <th>ΔD</th>
+                            <th>Desc</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalTableBody"></tbody>
+                </table>
+            </div>
+            <div id="modalMergeBar">
+                <label>Merge checked to:</label>
+                <select id="mergeNameSelect"></select>
+                <button id="modalMergeBtn">Merge</button>
+                <button id="modalCloseBtn">Close</button>
+                <span id="modalStatus"></span>
+            </div>
+        </div>
+    </div>
 
     <script>
         const fileInput = document.getElementById('fileInput');
@@ -371,10 +507,10 @@
                     'Old Name':  o.oldName,
                     'Type':      o.type.toUpperCase(),
                     'Setup Occ': o.setupOcc || '—',
-                    'N':         o.y  !== null ? o.y.toFixed(4)  : '—',
-                    'E':         o.x  !== null ? o.x.toFixed(4)  : '—',
-                    'Z':         o.z  !== null ? o.z.toFixed(4)  : '—',
-                    'Desc':      o.desc || '',
+                    'N':         o.y  !== null ? o.y.toFixed(4)  : '— (missing)',
+                    'E':         o.x  !== null ? o.x.toFixed(4)  : '— (missing)',
+                    'Z':         o.z  !== null ? o.z.toFixed(4)  : '— (no elev chain)',
+                    'Desc':      o.desc || '(none)',
                 })));
 
                 console.log('');
@@ -383,12 +519,26 @@
                     'Old Name':  p.name,
                     'Type':      p.type.toUpperCase(),
                     'Obs Count': p.obsCount,
-                    'Avg N':     p.y !== null ? p.y.toFixed(4) : '—',
-                    'Avg E':     p.x !== null ? p.x.toFixed(4) : '—',
-                    'Avg Z':     p.z !== null ? p.z.toFixed(4) : '—',
+                    'Avg N':     p.y !== null ? p.y.toFixed(4) : '— (missing)',
+                    'Avg E':     p.x !== null ? p.x.toFixed(4) : '— (missing)',
+                    'Avg Z':     p.z !== null ? p.z.toFixed(4) : '— (no elev chain)',
                     'Neighbor?': p.neighborFlag ? 'RED' : 'green',
-                    'Desc':      p.desc || '',
+                    'Desc':      p.desc || '(none)',
                 })));
+
+                // Flag any SS observations where Z could not be computed
+                const missingZ = obsStore.filter(o => o.type === 'ss' && o.z === null);
+                if (missingZ.length > 0) {
+                    console.warn(`${missingZ.length} SS observation(s) have no elevation — missing LS record or occupied point not in elevMap:`);
+                    console.table(missingZ.map(o => ({
+                        'Old Name':  o.oldName,
+                        'Setup Occ': o.setupOcc || '—',
+                        'Desc':      o.desc || '(none)',
+                    })));
+                } else {
+                    console.log('All SS observations have computed elevations.');
+                }
+
                 console.log('=== End Parse Results ===');
                 // --- End diagnostic dump ---
 
@@ -972,6 +1122,194 @@
                 plotCanvas._viewInit = false;
                 drawPlot();
             }
+        });
+
+        // ── Point Detail Modal ──
+
+        const POPUP_RADIUS = 0.25; // feet — observations within this distance of clicked point are shown
+
+        const modalOverlay   = document.getElementById('modalOverlay');
+        const modalTitle     = document.getElementById('modalTitle');
+        const modalTableBody = document.getElementById('modalTableBody');
+        const mergeNameSelect = document.getElementById('mergeNameSelect');
+        const modalMergeBtn  = document.getElementById('modalMergeBtn');
+        const modalCloseBtn  = document.getElementById('modalCloseBtn');
+        const modalStatus    = document.getElementById('modalStatus');
+
+        function closeModal() {
+            modalOverlay.classList.remove('active');
+        }
+
+        modalCloseBtn.addEventListener('click', closeModal);
+        modalOverlay.addEventListener('click', (e) => {
+            if (e.target === modalOverlay) closeModal();
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') closeModal();
+        });
+
+        // Find the traversePoint closest to a canvas click, within a pixel hit radius
+        function findClickedPoint(canvasX, canvasY) {
+            const W = plotCanvas._W, H = plotCanvas._H;
+            const pad = plotCanvas._pad;
+            const minX = plotCanvas._minX, minY = plotCanvas._minY;
+            const effectiveScale = plotCanvas._baseScale * plotCanvas._zoom;
+            const panX = plotCanvas._panX, panY = plotCanvas._panY;
+
+            let best = null, bestDist = Infinity;
+            traversePoints.forEach(p => {
+                const cx = pad + (p.x - minX) * effectiveScale + panX;
+                const cy = H - pad - (p.y - minY) * effectiveScale + panY;
+                const d = Math.sqrt((canvasX - cx) ** 2 + (canvasY - cy) ** 2);
+                if (d < 12 && d < bestDist) { // 12px hit target
+                    best = p;
+                    bestDist = d;
+                }
+            });
+            return best;
+        }
+
+        function fmt(v, dp) {
+            return v !== null && v !== undefined ? v.toFixed(dp) : '—';
+        }
+
+        function fmtDelta(v) {
+            if (v === null || v === undefined) return { text: '—', cls: '' };
+            const s = (v >= 0 ? '+' : '') + v.toFixed(4);
+            return { text: s, cls: v > 0.0001 ? 'delta-pos' : v < -0.0001 ? 'delta-neg' : '' };
+        }
+
+        function openModal(clickedPoint) {
+            // Gather all obsStore entries within POPUP_RADIUS of the clicked averaged position
+            const nearby = obsStore.filter(o => {
+                const dx = o.x - clickedPoint.x;
+                const dy = o.y - clickedPoint.y;
+                return Math.sqrt(dx * dx + dy * dy) <= POPUP_RADIUS;
+            });
+
+            if (nearby.length === 0) return;
+
+            // Compute average N, E, Z of all nearby observations
+            const avgN = nearby.reduce((s, o) => s + o.y, 0) / nearby.length;
+            const avgE = nearby.reduce((s, o) => s + o.x, 0) / nearby.length;
+            const zObs = nearby.filter(o => o.z !== null);
+            const avgZ = zObs.length > 0 ? zObs.reduce((s, o) => s + o.z, 0) / zObs.length : null;
+
+            // Resolve current display name for each observation
+            const withNames = nearby.map(o => {
+                const entry = pointData.find(([oldName]) => oldName === o.oldName);
+                const newName = entry ? entry[1] : o.oldName;
+                return { ...o, newName };
+            });
+
+            // Title: unique display names involved
+            const uniqueNewNames = [...new Set(withNames.map(o => o.newName))];
+            modalTitle.textContent = `Point Detail — ${uniqueNewNames.join(', ')}  (${nearby.length} observation${nearby.length !== 1 ? 's' : ''} within ${POPUP_RADIUS}')`;
+
+            // Build table rows
+            modalTableBody.innerHTML = '';
+            withNames.forEach((o, i) => {
+                const dN  = o.y - avgN;
+                const dE  = o.x - avgE;
+                const dD  = Math.sqrt(dN * dN + dE * dE);
+                const dNf = fmtDelta(dN);
+                const dEf = fmtDelta(dE);
+
+                // Flag rows that belong to a different display name than the clicked point
+                const entry = pointData.find(([oldName]) => oldName === clickedPoint.name);
+                const clickedNewName = entry ? entry[1] : clickedPoint.name;
+                const isForeign = o.newName !== clickedNewName;
+
+                const tr = document.createElement('tr');
+                if (isForeign) tr.classList.add('flagged');
+                tr.innerHTML = `
+                    <td style="text-align:center"><input type="checkbox" class="obs-check" data-idx="${i}" checked></td>
+                    <td class="name-cell">${o.oldName}</td>
+                    <td class="name-cell">${o.newName}</td>
+                    <td>${fmt(o.y, 4)}</td>
+                    <td>${fmt(o.x, 4)}</td>
+                    <td>${fmt(o.z, 4)}</td>
+                    <td class="${dNf.cls}">${dNf.text}</td>
+                    <td class="${dEf.cls}">${dEf.text}</td>
+                    <td>${dD.toFixed(4)}</td>
+                    <td class="name-cell">${o.desc || '—'}</td>
+                `;
+                modalTableBody.appendChild(tr);
+            });
+
+            // Average row
+            const avgTr = document.createElement('tr');
+            avgTr.classList.add('avg-row');
+            avgTr.innerHTML = `
+                <td style="text-align:center">—</td>
+                <td class="name-cell" colspan="2">Average</td>
+                <td>${fmt(avgN, 4)}</td>
+                <td>${fmt(avgE, 4)}</td>
+                <td>${fmt(avgZ, 4)}</td>
+                <td>—</td><td>—</td><td>—</td>
+                <td class="name-cell">—</td>
+            `;
+            modalTableBody.appendChild(avgTr);
+
+            // Populate merge name dropdown with all unique old names in nearby obs
+            const uniqueOldNames = [...new Set(nearby.map(o => o.oldName))];
+            mergeNameSelect.innerHTML = uniqueOldNames
+                .map(n => `<option value="${n}">${n}</option>`)
+                .join('');
+
+            modalStatus.textContent = '';
+            modalOverlay.classList.add('active');
+        }
+
+        // Merge button — rename all checked observations to selected name
+        modalMergeBtn.addEventListener('click', () => {
+            const targetName = mergeNameSelect.value;
+            if (!targetName) return;
+
+            const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
+            if (checked.length === 0) {
+                modalStatus.textContent = 'No observations checked.';
+                return;
+            }
+
+            // Get old names of checked rows (all but the avg row)
+            const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
+            const checkedOldNames = new Set(
+                checked.map(cb => {
+                    const row = rows[parseInt(cb.dataset.idx)];
+                    return row ? row.cells[1].textContent : null;
+                }).filter(Boolean)
+            );
+
+            // Apply renames in pointData
+            let changed = 0;
+            pointData.forEach(entry => {
+                if (checkedOldNames.has(entry[0])) {
+                    entry[1] = targetName;
+                    changed++;
+                }
+            });
+
+            updateFileContent();
+            updateGrid();
+            recomputeNeighborFlags();
+            redrawPlot();
+
+            modalStatus.textContent = `Merged ${changed} point${changed !== 1 ? 's' : ''} → ${targetName}`;
+        });
+
+        // Canvas click — find nearest point and open modal
+        plotCanvas.addEventListener('click', (e) => {
+            if (isDragging) return; // ignore click at end of a drag
+            if (traversePoints.length === 0) return;
+
+            const scaleX = plotCanvas.width / plotCanvas.offsetWidth;
+            const scaleY = plotCanvas.height / plotCanvas.offsetHeight;
+            const canvasX = e.offsetX * scaleX;
+            const canvasY = e.offsetY * scaleY;
+
+            const pt = findClickedPoint(canvasX, canvasY);
+            if (pt) openModal(pt);
         });
 
     </script>
