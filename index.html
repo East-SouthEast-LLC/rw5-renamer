@@ -5,58 +5,154 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>RW5 Point Renamer</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: Arial, sans-serif;
             margin: 20px;
             line-height: 1.6;
         }
+
+        h1 {
+            margin-bottom: 5px;
+        }
+
+        p.instructions {
+            margin-top: 0;
+            font-size: 14px;
+            color: #444;
+        }
+
         #dropZone {
             border: 2px dashed #4CAF50;
             padding: 20px;
             text-align: center;
-            margin: 20px 0;
+            margin: 10px 0;
             background-color: #f9f9f9;
             font-size: 18px;
             cursor: pointer;
         }
+
         #dropZone.hover {
             background-color: #e1f5e1;
         }
-        #controls {
+
+        /* Main layout: left fixed, right fills */
+        #mainLayout {
             display: flex;
+            gap: 15px;
             align-items: flex-start;
-            gap: 10px;
-            margin: 15px 0;
+            margin-top: 10px;
         }
+
+        /* LEFT PANEL */
+        #leftPanel {
+            flex: 0 0 320px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
         #textControls {
             display: flex;
             flex-direction: column;
+            gap: 5px;
         }
-        #gridContainer {
-            display: inline-block;
+
+        #textControls select,
+        #textControls input,
+        #textControls button {
+            width: 100%;
+            padding: 5px;
+            font-size: 14px;
         }
+
+        #textControls button {
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+        }
+
+        #textControls button:hover {
+            background-color: #45a049;
+        }
+
+        #exportButton {
+            background-color: #2196F3 !important;
+        }
+
+        #exportButton:hover {
+            background-color: #1976D2 !important;
+        }
+
         #grid {
             border-collapse: collapse;
-            width: 300px;
+            width: 100%;
             font-size: 12px;
         }
+
         #grid th, #grid td {
             border: 1px solid #ddd;
             padding: 4px;
             text-align: left;
         }
+
         #grid th {
             background-color: #f4f4f4;
         }
+
+        /* RIGHT PANEL */
+        #rightPanel {
+            flex: 1 1 auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        #plotLabel {
+            font-size: 13px;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 4px;
+        }
+
+        #plotPlaceholder {
+            width: 100%;
+            height: 500px;
+            border: 2px solid #ccc;
+            background-color: #fafafa;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #bbb;
+            font-size: 14px;
+            font-style: italic;
+        }
+
+        #plotCanvas {
+            border: 2px solid #ccc;
+            background-color: #fafafa;
+            width: 100%;
+            height: 500px;
+            display: none;
+        }
+
+        /* FILE CONTENTS */
         #fileContents {
             white-space: pre-wrap;
             background-color: #f4f4f4;
             border: 1px solid #ddd;
             padding: 10px;
             overflow: auto;
-            max-height: 400px;
+            max-height: 300px;
             font-family: monospace;
+            font-size: 12px;
+            margin-top: 15px;
         }
+
         .highlight {
             font-weight: bold;
             color: red;
@@ -65,10 +161,10 @@
 </head>
 <body>
     <h1>RW5 Point Renamer</h1>
-    <p>
-        Drop a fieldbook file into the drag and drop box. This will extract all points after PN, OP, BP, and FP.
-        Use the dropdown or text box to update point names. Click <strong>Export Updated File</strong> to download
-        the modified RW5 with a change log prepended.<br>
+    <p class="instructions">
+        Drop a fieldbook file into the drag and drop box. Points after PN, OP, BP, and FP will be extracted.
+        Select a point from the dropdown, enter a new name, and click <strong>Rename Point</strong> (or press Enter).
+        Click <strong>Export Updated File</strong> to download the modified RW5 with a change log prepended.<br>
         <em>All data remains in your browser — no files are uploaded to any server.</em>
     </p>
 
@@ -77,16 +173,18 @@
         <input type="file" id="fileInput" accept=".rw5,.RW5" style="display: none;">
     </div>
 
-    <div id="controls">
-        <div id="textControls">
-            <select id="pointSelector">
-                <option value="">Select a Point</option>
-            </select>
-            <input type="text" id="newPointName" placeholder="Enter new point name">
-            <button id="renameButton">Rename Point</button>
-            <button id="exportButton">Export Updated File</button>
-        </div>
-        <div id="gridContainer">
+    <div id="mainLayout">
+
+        <!-- LEFT PANEL -->
+        <div id="leftPanel">
+            <div id="textControls">
+                <select id="pointSelector">
+                    <option value="">Select a Point</option>
+                </select>
+                <input type="text" id="newPointName" placeholder="Enter new point name">
+                <button id="renameButton">Rename Point</button>
+                <button id="exportButton">Export Updated File</button>
+            </div>
             <table id="grid">
                 <thead>
                     <tr>
@@ -97,6 +195,14 @@
                 <tbody></tbody>
             </table>
         </div>
+
+        <!-- RIGHT PANEL -->
+        <div id="rightPanel">
+            <div id="plotLabel">Field Point Plot (approximate positions)</div>
+            <div id="plotPlaceholder">Load an RW5 file to plot field points</div>
+            <canvas id="plotCanvas"></canvas>
+        </div>
+
     </div>
 
     <div id="fileContents">File contents will appear here...</div>
@@ -110,23 +216,26 @@
         const renameButton = document.getElementById('renameButton');
         const exportButton = document.getElementById('exportButton');
         const gridBody = document.querySelector("#grid tbody");
+        const plotCanvas = document.getElementById('plotCanvas');
+        const plotPlaceholder = document.getElementById('plotPlaceholder');
+        const ctx = plotCanvas.getContext('2d');
 
-        let fileContent = "";   // Current (working) file content
-        let pointData = [];     // Array of [oldName, newName] pairs
-        let sortedPoints = [];  // Sorted list of original point names
-        let currentIndex = 0;  // Tracks which point is active
-        let fileName = "";      // Original uploaded file name
+        let fileContent = "";
+        let pointData = [];
+        let sortedPoints = [];
+        let currentIndex = 0;
+        let fileName = "";
+        let traversePoints = [];
 
         // --- Event Listeners ---
 
-		pointSelector.addEventListener('change', () => {
-			const selectedPoint = pointSelector.value;
-			const pointEntry = pointData.find(([oldName]) => oldName === selectedPoint);
-			newPointNameInput.value = pointEntry ? pointEntry[1] : selectedPoint;
-		});
+        pointSelector.addEventListener('change', () => {
+            const selectedPoint = pointSelector.value;
+            const pointEntry = pointData.find(([oldName]) => oldName === selectedPoint);
+            newPointNameInput.value = pointEntry ? pointEntry[1] : selectedPoint;
+        });
 
         dropZone.addEventListener('click', () => fileInput.click());
-
         fileInput.addEventListener('change', handleFileUpload);
 
         dropZone.addEventListener('dragover', (event) => {
@@ -164,7 +273,7 @@
 
         exportButton.addEventListener('click', exportFile);
 
-        // --- Core Functions ---
+        // --- File Handling ---
 
         function handleFileUpload(event) {
             const file = event.target.files[0];
@@ -184,6 +293,9 @@
                 populatePointDropdown(pointNames);
                 pointData = pointNames.map((point) => [point, point]);
                 updateGrid();
+
+                traversePoints = parseTraversePoints(fileContent);
+                drawPlot();
             };
 
             reader.onerror = function() {
@@ -192,6 +304,8 @@
 
             reader.readAsText(file);
         }
+
+        // --- Point Extraction ---
 
         function extractAllPointNames(content) {
             const prefixes = ['PN', 'BP', 'FP', 'OP'];
@@ -225,9 +339,12 @@
 
             if (sortedPoints.length > 0) {
                 pointSelector.value = sortedPoints[0];
-                newPointNameInput.value = sortedPoints[0];
+                const firstEntry = pointData.find(([old]) => old === sortedPoints[0]);
+                newPointNameInput.value = firstEntry ? firstEntry[1] : sortedPoints[0];
             }
         }
+
+        // --- Rename ---
 
         function renamePoint() {
             const selectedPoint = pointSelector.value;
@@ -246,7 +363,8 @@
 
                 currentIndex = (pointIndex + 1) % sortedPoints.length;
                 pointSelector.value = sortedPoints[currentIndex];
-                newPointNameInput.value = sortedPoints[currentIndex];
+                const nextEntry = pointData.find(([old]) => old === sortedPoints[currentIndex]);
+                newPointNameInput.value = nextEntry ? nextEntry[1] : sortedPoints[currentIndex];
                 newPointNameInput.select();
             }
         }
@@ -277,6 +395,8 @@
             fileContents.innerHTML = highlightedContent;
         }
 
+        // --- Grid ---
+
         function updateGrid() {
             gridBody.innerHTML = "";
             pointData.forEach(([oldName, newName]) => {
@@ -290,6 +410,8 @@
                 gridBody.appendChild(row);
             });
         }
+
+        // --- Export ---
 
         function exportFile() {
             const header =
@@ -309,6 +431,156 @@
             link.download = updatedFileName;
             link.click();
         }
+
+        // --- Traverse Plot ---
+
+        function getField(line, fieldName) {
+            const regex = new RegExp(`,${fieldName}([^,\\r\\n]+)`);
+            const match = line.match(regex);
+            return match ? match[1].trim() : null;
+        }
+
+        function parseTraversePoints(content) {
+            const lines = content.split('\n');
+            const points = {};
+
+            // First pass: GPS records (GS lines) — lat/lon
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.startsWith('GS,')) {
+                    const pn = getField(line, 'PN');
+                    const lat = getField(line, 'LA');
+                    const lon = getField(line, 'LN');
+                    if (pn && lat && lon) {
+                        if (!points[pn]) {
+                            points[pn] = { name: pn, lat: parseFloat(lat), lon: parseFloat(lon) };
+                        }
+                    }
+                }
+            });
+
+            const gpsPoints = Object.values(points).filter(p => p.lat !== undefined);
+
+            if (gpsPoints.length > 0) {
+                // Convert lat/lon to local XY (approximate, feet)
+                const originLat = gpsPoints[0].lat;
+                const originLon = gpsPoints[0].lon;
+                const latScale = 364000;
+                const lonScale = 364000 * Math.cos(originLat * Math.PI / 180);
+
+                gpsPoints.forEach(p => {
+                    p.x = (p.lon - originLon) * lonScale;
+                    p.y = (p.lat - originLat) * latScale;
+                });
+
+                return gpsPoints;
+            }
+
+            // Fallback: SS/TR records — rough positional spread
+            const ssPoints = [];
+            let idx = 0;
+            lines.forEach(line => {
+                line = line.trim();
+                if (line.startsWith('SS,') || line.startsWith('TR,')) {
+                    const pn = getField(line, 'PN');
+                    const sd = parseFloat(getField(line, 'SD') || '0');
+                    if (pn && sd > 0) {
+                        const angle = (idx * 47) % 360;
+                        const rad = angle * Math.PI / 180;
+                        ssPoints.push({
+                            name: pn,
+                            x: sd * Math.cos(rad),
+                            y: sd * Math.sin(rad)
+                        });
+                        idx++;
+                    }
+                }
+            });
+
+            return ssPoints;
+        }
+
+        function drawPlot() {
+            if (!traversePoints || traversePoints.length === 0) {
+                plotPlaceholder.style.display = 'flex';
+                plotCanvas.style.display = 'none';
+                plotPlaceholder.textContent = 'No plottable coordinate data found in this RW5 file';
+                return;
+            }
+
+            plotPlaceholder.style.display = 'none';
+            plotCanvas.style.display = 'block';
+
+            // Size canvas to its container
+            plotCanvas.width = plotCanvas.offsetWidth || 600;
+            plotCanvas.height = 500;
+
+            const W = plotCanvas.width;
+            const H = plotCanvas.height;
+            const pad = 45;
+
+            const xs = traversePoints.map(p => p.x);
+            const ys = traversePoints.map(p => p.y);
+            const minX = Math.min(...xs), maxX = Math.max(...xs);
+            const minY = Math.min(...ys), maxY = Math.max(...ys);
+            const rangeX = maxX - minX || 1;
+            const rangeY = maxY - minY || 1;
+
+            const scaleX = (W - pad * 2) / rangeX;
+            const scaleY = (H - pad * 2) / rangeY;
+            const scale = Math.min(scaleX, scaleY);
+
+            const toCanvas = (x, y) => ({
+                cx: pad + (x - minX) * scale,
+                cy: H - pad - (y - minY) * scale
+            });
+
+            // Clear and background
+            ctx.clearRect(0, 0, W, H);
+            ctx.fillStyle = '#fafafa';
+            ctx.fillRect(0, 0, W, H);
+
+            // Light connecting lines
+            if (traversePoints.length > 1) {
+                ctx.beginPath();
+                const first = toCanvas(traversePoints[0].x, traversePoints[0].y);
+                ctx.moveTo(first.cx, first.cy);
+                traversePoints.forEach(p => {
+                    const { cx, cy } = toCanvas(p.x, p.y);
+                    ctx.lineTo(cx, cy);
+                });
+                ctx.strokeStyle = 'rgba(33, 150, 243, 0.25)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            }
+
+            // Points and labels
+            traversePoints.forEach(p => {
+                const { cx, cy } = toCanvas(p.x, p.y);
+
+                ctx.beginPath();
+                ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#2196F3';
+                ctx.fill();
+                ctx.strokeStyle = '#1565C0';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+
+                ctx.fillStyle = '#333';
+                ctx.font = '11px Arial';
+                ctx.fillText(p.name, cx + 7, cy - 4);
+            });
+
+            // Border
+            ctx.strokeStyle = '#ccc';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(0, 0, W, H);
+        }
+
+        window.addEventListener('resize', () => {
+            if (traversePoints.length > 0) drawPlot();
+        });
+
     </script>
 </body>
 </html>
