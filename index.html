@@ -119,9 +119,11 @@
 
         // --- Event Listeners ---
 
-        pointSelector.addEventListener('change', () => {
-            newPointNameInput.value = pointSelector.value;
-        });
+		pointSelector.addEventListener('change', () => {
+			const selectedPoint = pointSelector.value;
+			const pointEntry = pointData.find(([oldName]) => oldName === selectedPoint);
+			newPointNameInput.value = pointEntry ? pointEntry[1] : selectedPoint;
+		});
 
         dropZone.addEventListener('click', () => fileInput.click());
 
