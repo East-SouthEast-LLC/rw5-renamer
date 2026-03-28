@@ -520,9 +520,20 @@
 
         function parseTraversePoints(content) {
             const lines = content.split('\n');
-            const points = [];
-            const seen = new Set();
             const coordMap = {}; // name -> {x, y} for COGO lookups
+
+            // accumulator: name -> { xs: [], ys: [], desc, type }
+            const accumulator = {};
+
+            function addObs(name, x, y, desc, type) {
+                if (!accumulator[name]) {
+                    accumulator[name] = { xs: [], ys: [], desc, type };
+                }
+                accumulator[name].xs.push(x);
+                accumulator[name].ys.push(y);
+                // Keep first non-empty desc
+                if (!accumulator[name].desc && desc) accumulator[name].desc = desc;
+            }
 
             // SP records: SP,PNxxx,N xxxxxxx.xxxx,E xxxxxxx.xxxx,EL xx.xxxx,--DESC
             lines.forEach(line => {
@@ -543,10 +554,7 @@
 
                         if (!isNaN(n) && !isNaN(e)) {
                             coordMap[name] = { x: e, y: n };
-                            if (!seen.has(name)) {
-                                seen.add(name);
-                                points.push({ name, x: e, y: n, desc, type: 'sp' });
-                            }
+                            addObs(name, e, n, desc, 'sp');
                         }
                     }
                 }
@@ -572,22 +580,19 @@
                 line = line.trim();
 
                 if (line.startsWith('OC,')) {
-                    // OC,OPxxx,N...,E...
                     const parts = line.split(',');
                     if (parts[1] && parts[1].startsWith('OP')) {
                         occName = parts[1].substring(2).trim();
-                        // Also grab inline coords if present
                         const nMatch = line.match(/,N\s*([\d.]+)/);
                         const eMatch = line.match(/,E\s*([\d.]+)/);
                         if (nMatch && eMatch && !coordMap[occName]) {
                             coordMap[occName] = { x: parseFloat(eMatch[1]), y: parseFloat(nMatch[1]) };
                         }
                     }
-                    bsName = null; // reset backsight on new setup
+                    bsName = null;
                 }
 
                 if (line.startsWith('BK,') || line.startsWith('BD,')) {
-                    // BK,OPxxx,BPxxx,BS...
                     const parts = line.split(',');
                     if (parts[2] && parts[2].startsWith('BP')) {
                         bsName = parts[2].substring(2).trim();
@@ -600,7 +605,6 @@
                     const bs = coordMap[bsName];
                     if (!occ || !bs) return;
 
-                    // Extract FP (foresight point name)
                     const fpMatch = line.match(/,FP([A-Za-z0-9]+),/);
                     const arMatch = line.match(/,AR([\d.]+)/);
                     const sdMatch = line.match(/,SD([\d.]+)/);
@@ -615,26 +619,18 @@
                     const ze = dmsToRad(parseFloat(zeMatch[1]));
                     const desc = descMatch ? descMatch[1].trim() : '';
 
-                    // Horizontal distance from slope distance and zenith angle
                     const hd = sd * Math.sin(ze);
-
-                    // Azimuth from occ to bs
                     const azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
-
-                    // Azimuth to foresight = azimuth to BS + angle right
                     const azFP = azBS + ar;
-
-                    // Compute foresight coords
                     const fpN = occ.y + hd * Math.cos(azFP);
                     const fpE = occ.x + hd * Math.sin(azFP);
 
                     if (!isNaN(fpN) && !isNaN(fpE)) {
+                        // Update coordMap with latest observation for COGO chaining
                         coordMap[fpName] = { x: fpE, y: fpN };
-                        if (!seen.has(fpName)) {
-                            seen.add(fpName);
-                            points.push({ name: fpName, x: fpE, y: fpN, desc, type: 'ss' });
-                        }
-                        // Store line from instrument to sideshot
+                        addObs(fpName, fpE, fpN, desc, 'ss');
+
+                        // All observation lines are still drawn (shows spread)
                         traverseLines.push({
                             x1: occ.x, y1: occ.y,
                             x2: fpE, y2: fpN,
@@ -642,6 +638,13 @@
                         });
                     }
                 }
+            });
+
+            // Collapse accumulator: average all observations per point name into one marker
+            const points = Object.entries(accumulator).map(([name, { xs, ys, desc, type }]) => {
+                const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
+                const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
+                return { name, x: avgX, y: avgY, desc, type, obsCount: xs.length };
             });
 
             return points;
@@ -745,12 +748,15 @@
                 const entry = pointData.find(([oldName]) => oldName === p.name);
                 const displayName = entry ? entry[1] : p.name;
 
+                const isDuplicate = p.obsCount && p.obsCount > 1;
+                const radius = isDuplicate ? 6 : 5;
+
                 ctx.beginPath();
-                ctx.arc(cx, cy, 5, 0, Math.PI * 2);
+                ctx.arc(cx, cy, radius, 0, Math.PI * 2);
                 ctx.fillStyle = p.type === 'ss' ? '#4CAF50' : '#2196F3';
                 ctx.fill();
-                ctx.strokeStyle = p.type === 'ss' ? '#2E7D32' : '#1565C0';
-                ctx.lineWidth = 1;
+                ctx.strokeStyle = isDuplicate ? '#FF5722' : (p.type === 'ss' ? '#2E7D32' : '#1565C0');
+                ctx.lineWidth = isDuplicate ? 2 : 1;
                 ctx.stroke();
 
                 // Point name in bold
@@ -758,8 +764,12 @@
                 ctx.font = 'bold 11px Arial';
                 ctx.fillText(displayName, cx + 7, cy - 4);
 
-                // Description in lighter text below
-                if (p.desc) {
+                // Observation count badge for averaged duplicates, else description
+                if (isDuplicate) {
+                    ctx.fillStyle = '#FF5722';
+                    ctx.font = 'bold 9px Arial';
+                    ctx.fillText('\xD7' + p.obsCount + ' obs', cx + 7, cy + 7);
+                } else if (p.desc) {
                     ctx.fillStyle = '#888';
                     ctx.font = '10px Arial';
                     ctx.fillText(p.desc, cx + 7, cy + 8);
