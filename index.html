@@ -522,38 +522,132 @@
             const lines = content.split('\n');
             const points = [];
             const seen = new Set();
+            const coordMap = {}; // name -> {x, y} for COGO lookups
 
             // SP records: SP,PNxxx,N xxxxxxx.xxxx,E xxxxxxx.xxxx,EL xx.xxxx,--DESC
             lines.forEach(line => {
                 line = line.trim();
                 if (line.startsWith('SP,')) {
                     const parts = line.split(',');
-                    // Point name is 2nd field, starts with PN
                     if (!parts[1] || !parts[1].startsWith('PN')) return;
                     const name = parts[1].substring(2).trim();
 
-                    // Extract N and E values
                     const nMatch = line.match(/,N\s*([\d.]+)/);
                     const eMatch = line.match(/,E\s*([\d.]+)/);
 
                     if (nMatch && eMatch) {
                         const n = parseFloat(nMatch[1]);
                         const e = parseFloat(eMatch[1]);
-
-                        // Extract description after '--'
                         const descMatch = line.match(/,--([^,\r\n]+)/);
                         const desc = descMatch ? descMatch[1].trim() : '';
 
-                        if (!seen.has(name) && !isNaN(n) && !isNaN(e)) {
-                            seen.add(name);
-                            points.push({ name, x: e, y: n, desc });
+                        if (!isNaN(n) && !isNaN(e)) {
+                            coordMap[name] = { x: e, y: n };
+                            if (!seen.has(name)) {
+                                seen.add(name);
+                                points.push({ name, x: e, y: n, desc, type: 'sp' });
+                            }
                         }
+                    }
+                }
+            });
+
+            // COGO: compute SS sideshot coordinates from OC/BK/SS records
+            // Angles in RW5 are DDD.MMSS format
+            function dmsToDecDeg(dms) {
+                const d = Math.floor(Math.abs(dms));
+                const m = Math.floor((Math.abs(dms) - d) * 100);
+                const s = (((Math.abs(dms) - d) * 100) - m) * 100;
+                return (d + m / 60 + s / 3600) * (dms < 0 ? -1 : 1);
+            }
+
+            function dmsToRad(dms) {
+                return dmsToDecDeg(dms) * Math.PI / 180;
+            }
+
+            let occName = null, bsName = null;
+            traverseLines = []; // reset lines array
+
+            lines.forEach(line => {
+                line = line.trim();
+
+                if (line.startsWith('OC,')) {
+                    // OC,OPxxx,N...,E...
+                    const parts = line.split(',');
+                    if (parts[1] && parts[1].startsWith('OP')) {
+                        occName = parts[1].substring(2).trim();
+                        // Also grab inline coords if present
+                        const nMatch = line.match(/,N\s*([\d.]+)/);
+                        const eMatch = line.match(/,E\s*([\d.]+)/);
+                        if (nMatch && eMatch && !coordMap[occName]) {
+                            coordMap[occName] = { x: parseFloat(eMatch[1]), y: parseFloat(nMatch[1]) };
+                        }
+                    }
+                    bsName = null; // reset backsight on new setup
+                }
+
+                if (line.startsWith('BK,') || line.startsWith('BD,')) {
+                    // BK,OPxxx,BPxxx,BS...
+                    const parts = line.split(',');
+                    if (parts[2] && parts[2].startsWith('BP')) {
+                        bsName = parts[2].substring(2).trim();
+                    }
+                }
+
+                if (line.startsWith('SS,')) {
+                    if (!occName || !bsName) return;
+                    const occ = coordMap[occName];
+                    const bs = coordMap[bsName];
+                    if (!occ || !bs) return;
+
+                    // Extract FP (foresight point name)
+                    const fpMatch = line.match(/,FP([A-Za-z0-9]+),/);
+                    const arMatch = line.match(/,AR([\d.]+)/);
+                    const sdMatch = line.match(/,SD([\d.]+)/);
+                    const zeMatch = line.match(/,ZE([\d.]+)/);
+                    const descMatch = line.match(/,--([^,\r\n]+)/);
+
+                    if (!fpMatch || !arMatch || !sdMatch || !zeMatch) return;
+
+                    const fpName = fpMatch[1].trim();
+                    const ar = dmsToRad(parseFloat(arMatch[1]));
+                    const sd = parseFloat(sdMatch[1]);
+                    const ze = dmsToRad(parseFloat(zeMatch[1]));
+                    const desc = descMatch ? descMatch[1].trim() : '';
+
+                    // Horizontal distance from slope distance and zenith angle
+                    const hd = sd * Math.sin(ze);
+
+                    // Azimuth from occ to bs
+                    const azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
+
+                    // Azimuth to foresight = azimuth to BS + angle right
+                    const azFP = azBS + ar;
+
+                    // Compute foresight coords
+                    const fpN = occ.y + hd * Math.cos(azFP);
+                    const fpE = occ.x + hd * Math.sin(azFP);
+
+                    if (!isNaN(fpN) && !isNaN(fpE)) {
+                        coordMap[fpName] = { x: fpE, y: fpN };
+                        if (!seen.has(fpName)) {
+                            seen.add(fpName);
+                            points.push({ name: fpName, x: fpE, y: fpN, desc, type: 'ss' });
+                        }
+                        // Store line from instrument to sideshot
+                        traverseLines.push({
+                            x1: occ.x, y1: occ.y,
+                            x2: fpE, y2: fpN,
+                            type: 'ss'
+                        });
                     }
                 }
             });
 
             return points;
         }
+
+        let traverseLines = []; // lines to draw on map
 
         function drawPlot() {
             if (!traversePoints || traversePoints.length === 0) {
@@ -628,6 +722,18 @@
             ctx.fillStyle = '#fafafa';
             ctx.fillRect(0, 0, W, H);
 
+            // Draw SS lines (instrument to sideshot)
+            traverseLines.forEach(line => {
+                const a = toCanvas(line.x1, line.y1);
+                const b = toCanvas(line.x2, line.y2);
+                ctx.beginPath();
+                ctx.moveTo(a.cx, a.cy);
+                ctx.lineTo(b.cx, b.cy);
+                ctx.strokeStyle = 'rgba(255, 152, 0, 0.5)';
+                ctx.lineWidth = 1;
+                ctx.stroke();
+            });
+
             // Points and labels
             traversePoints.forEach(p => {
                 const { cx, cy } = toCanvas(p.x, p.y);
@@ -641,9 +747,9 @@
 
                 ctx.beginPath();
                 ctx.arc(cx, cy, 5, 0, Math.PI * 2);
-                ctx.fillStyle = '#2196F3';
+                ctx.fillStyle = p.type === 'ss' ? '#4CAF50' : '#2196F3';
                 ctx.fill();
-                ctx.strokeStyle = '#1565C0';
+                ctx.strokeStyle = p.type === 'ss' ? '#2E7D32' : '#1565C0';
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
@@ -673,16 +779,17 @@
 
         // --- Pan & Zoom Event Handlers ---
 
-        // Mouse wheel zoom
+        // Mouse wheel zoom — centered on cursor position
         plotCanvas.addEventListener('wheel', (e) => {
             if (traversePoints.length === 0) return;
             e.preventDefault();
             const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
-            const rect = plotCanvas.getBoundingClientRect();
-            const mouseX = (e.clientX - rect.left) * (plotCanvas.width / rect.width);
-            const mouseY = (e.clientY - rect.top) * (plotCanvas.height / rect.height);
 
-            // Zoom toward mouse position
+            // offsetX/offsetY are relative to the canvas element — always correct
+            const mouseX = e.offsetX * (plotCanvas.width / plotCanvas.offsetWidth);
+            const mouseY = e.offsetY * (plotCanvas.height / plotCanvas.offsetHeight);
+
+            // Zoom toward cursor
             plotCanvas._panX = mouseX + (plotCanvas._panX - mouseX) * zoomFactor;
             plotCanvas._panY = mouseY + (plotCanvas._panY - mouseY) * zoomFactor;
             plotCanvas._zoom *= zoomFactor;
