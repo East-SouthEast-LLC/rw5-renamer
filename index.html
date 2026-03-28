@@ -294,6 +294,7 @@
                 updateGrid();
 
                 traversePoints = parseTraversePoints(fileContent);
+                plotCanvas._viewInit = false;
                 drawPlot();
             };
 
@@ -498,13 +499,44 @@
             const rangeX = maxX - minX || 1;
             const rangeY = maxY - minY || 1;
 
-            const scaleX = (W - pad * 2) / rangeX;
-            const scaleY = (H - pad * 2) / rangeY;
-            const scale = Math.min(scaleX, scaleY);
+            const baseScale = Math.min(
+                (W - pad * 2) / rangeX,
+                (H - pad * 2) / rangeY
+            );
+
+            // Pan/zoom state — reset on new file load
+            if (!plotCanvas._viewInit) {
+                plotCanvas._zoom = 1;
+                plotCanvas._panX = 0;
+                plotCanvas._panY = 0;
+                plotCanvas._viewInit = true;
+                plotCanvas._minX = minX;
+                plotCanvas._minY = minY;
+                plotCanvas._baseScale = baseScale;
+                plotCanvas._W = W;
+                plotCanvas._H = H;
+                plotCanvas._pad = pad;
+            }
+
+            redrawPlot();
+        }
+
+        function redrawPlot() {
+            const W = plotCanvas._W;
+            const H = plotCanvas._H;
+            const pad = plotCanvas._pad;
+            const minX = plotCanvas._minX;
+            const minY = plotCanvas._minY;
+            const baseScale = plotCanvas._baseScale;
+            const zoom = plotCanvas._zoom;
+            const panX = plotCanvas._panX;
+            const panY = plotCanvas._panY;
+
+            const effectiveScale = baseScale * zoom;
 
             const toCanvas = (x, y) => ({
-                cx: pad + (x - minX) * scale,
-                cy: H - pad - (y - minY) * scale
+                cx: pad + (x - minX) * effectiveScale + panX,
+                cy: H - pad - (y - minY) * effectiveScale + panY
             });
 
             // Clear and background
@@ -512,23 +544,12 @@
             ctx.fillStyle = '#fafafa';
             ctx.fillRect(0, 0, W, H);
 
-            // Light connecting lines
-            if (traversePoints.length > 1) {
-                ctx.beginPath();
-                const first = toCanvas(traversePoints[0].x, traversePoints[0].y);
-                ctx.moveTo(first.cx, first.cy);
-                traversePoints.forEach(p => {
-                    const { cx, cy } = toCanvas(p.x, p.y);
-                    ctx.lineTo(cx, cy);
-                });
-                ctx.strokeStyle = 'rgba(33, 150, 243, 0.25)';
-                ctx.lineWidth = 1;
-                ctx.stroke();
-            }
-
             // Points and labels
             traversePoints.forEach(p => {
                 const { cx, cy } = toCanvas(p.x, p.y);
+
+                // Skip points outside canvas (with margin)
+                if (cx < -20 || cx > W + 20 || cy < -20 || cy > H + 20) return;
 
                 ctx.beginPath();
                 ctx.arc(cx, cy, 5, 0, Math.PI * 2);
@@ -547,10 +568,73 @@
             ctx.strokeStyle = '#ccc';
             ctx.lineWidth = 1;
             ctx.strokeRect(0, 0, W, H);
+
+            // Zoom level indicator
+            ctx.fillStyle = '#999';
+            ctx.font = '11px Arial';
+            ctx.fillText(`Zoom: ${zoom.toFixed(1)}x`, 8, H - 8);
         }
 
+        // --- Pan & Zoom Event Handlers ---
+
+        // Mouse wheel zoom
+        plotCanvas.addEventListener('wheel', (e) => {
+            if (traversePoints.length === 0) return;
+            e.preventDefault();
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 0.87;
+            const rect = plotCanvas.getBoundingClientRect();
+            const mouseX = (e.clientX - rect.left) * (plotCanvas.width / rect.width);
+            const mouseY = (e.clientY - rect.top) * (plotCanvas.height / rect.height);
+
+            // Zoom toward mouse position
+            plotCanvas._panX = mouseX + (plotCanvas._panX - mouseX) * zoomFactor;
+            plotCanvas._panY = mouseY + (plotCanvas._panY - mouseY) * zoomFactor;
+            plotCanvas._zoom *= zoomFactor;
+
+            redrawPlot();
+        }, { passive: false });
+
+        // Mouse drag pan
+        let isDragging = false;
+        let dragStartX = 0, dragStartY = 0;
+
+        plotCanvas.addEventListener('mousedown', (e) => {
+            if (traversePoints.length === 0) return;
+            isDragging = true;
+            dragStartX = e.clientX - plotCanvas._panX;
+            dragStartY = e.clientY - plotCanvas._panY;
+            plotCanvas.style.cursor = 'grabbing';
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            plotCanvas._panX = e.clientX - dragStartX;
+            plotCanvas._panY = e.clientY - dragStartY;
+            redrawPlot();
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDragging = false;
+            plotCanvas.style.cursor = 'grab';
+        });
+
+        // Double-click to reset view
+        plotCanvas.addEventListener('dblclick', () => {
+            if (traversePoints.length === 0) return;
+            plotCanvas._zoom = 1;
+            plotCanvas._panX = 0;
+            plotCanvas._panY = 0;
+            redrawPlot();
+        });
+
+        // Set grab cursor when points are loaded
+        plotCanvas.style.cursor = 'grab';
+
         window.addEventListener('resize', () => {
-            if (traversePoints.length > 0) drawPlot();
+            if (traversePoints.length > 0) {
+                plotCanvas._viewInit = false;
+                drawPlot();
+            }
         });
 
     </script>
