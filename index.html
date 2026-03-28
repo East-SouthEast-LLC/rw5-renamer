@@ -384,6 +384,7 @@
                 pointData[pointIndex][1] = newPointName;
                 updateFileContent();
                 updateGrid();
+                if (traversePoints.length > 0) redrawPlot();
 
                 currentIndex = (pointIndex + 1) % sortedPoints.length;
                 pointSelector.value = sortedPoints[currentIndex];
@@ -484,10 +485,13 @@
                         const n = parseFloat(nMatch[1]);
                         const e = parseFloat(eMatch[1]);
 
+                        // Extract description after '--'
+                        const descMatch = line.match(/,--([^,\r\n]+)/);
+                        const desc = descMatch ? descMatch[1].trim() : '';
+
                         if (!seen.has(name) && !isNaN(n) && !isNaN(e)) {
                             seen.add(name);
-                            // Use E as X axis, N as Y axis (standard survey convention)
-                            points.push({ name, x: e, y: n });
+                            points.push({ name, x: e, y: n, desc });
                         }
                     }
                 }
@@ -576,6 +580,10 @@
                 // Skip points outside canvas (with margin)
                 if (cx < -20 || cx > W + 20 || cy < -20 || cy > H + 20) return;
 
+                // Look up current new name from pointData
+                const entry = pointData.find(([oldName]) => oldName === p.name);
+                const displayName = entry ? entry[1] : p.name;
+
                 ctx.beginPath();
                 ctx.arc(cx, cy, 5, 0, Math.PI * 2);
                 ctx.fillStyle = '#2196F3';
@@ -584,9 +592,17 @@
                 ctx.lineWidth = 1;
                 ctx.stroke();
 
+                // Point name in bold
                 ctx.fillStyle = '#333';
-                ctx.font = '11px Arial';
-                ctx.fillText(p.name, cx + 7, cy - 4);
+                ctx.font = 'bold 11px Arial';
+                ctx.fillText(displayName, cx + 7, cy - 4);
+
+                // Description in lighter text below
+                if (p.desc) {
+                    ctx.fillStyle = '#888';
+                    ctx.font = '10px Arial';
+                    ctx.fillText(p.desc, cx + 7, cy + 8);
+                }
             });
 
             // Border
