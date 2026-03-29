@@ -106,6 +106,14 @@
             background-color: #1976D2 !important;
         }
 
+        #renumberButton {
+            background-color: #9C27B0 !important;
+        }
+
+        #renumberButton:hover {
+            background-color: #7B1FA2 !important;
+        }
+
         #zoomToPointButton {
             background-color: #FF9800 !important;
         }
@@ -309,7 +317,104 @@
             color: #555;
             font-style: italic;
         }
-    </style>
+        /* ── Renumber Modal ── */
+        #renumberOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        #renumberOverlay.active { display: flex; }
+        #renumberPanel {
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+            padding: 20px 24px 16px;
+            min-width: 480px;
+            max-width: 92vw;
+            max-height: 85vh;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-size: 13px;
+        }
+        #renumberPanel h2 {
+            margin: 0;
+            font-size: 16px;
+            color: #333;
+        }
+        .rn-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .rn-row label {
+            flex: 0 0 160px;
+            font-weight: bold;
+            color: #444;
+        }
+        .rn-row input[type="text"],
+        .rn-row input[type="number"] {
+            flex: 1;
+            padding: 5px 7px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        .rn-row input[type="checkbox"] {
+            width: 16px; height: 16px; cursor: pointer;
+        }
+        .rn-helper {
+            font-size: 11px;
+            color: #888;
+            margin-left: 170px;
+            margin-top: -8px;
+        }
+        #rnPreviewBox {
+            background: #f4f4f4;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            padding: 8px 10px;
+            font-family: monospace;
+            font-size: 12px;
+            max-height: 220px;
+            overflow-y: auto;
+            white-space: pre;
+        }
+        #rnPreviewLabel {
+            font-weight: bold;
+            color: #555;
+            font-size: 12px;
+        }
+        .rn-btnrow {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        .rn-btnrow button {
+            padding: 5px 16px;
+            font-size: 13px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #fff;
+        }
+        #rnApplyBtn  { background: #9C27B0; }
+        #rnApplyBtn:hover  { background: #7B1FA2; }
+        #rnCancelBtn { background: #9E9E9E; }
+        #rnCancelBtn:hover { background: #616161; }
+        #rnStatus {
+            font-size: 12px;
+            color: #555;
+            font-style: italic;
+            min-height: 16px;
+        }
+    
 </head>
 <body>
 <div id="appWrapper">
@@ -337,6 +442,7 @@
                 <input type="text" id="newPointName" placeholder="Enter new point name">
                 <button id="renameButton">Rename Point</button>
                 <button id="zoomToPointButton">Zoom to Point</button>
+                <button id="renumberButton">Renumber Points...</button>
                 <button id="exportButton">Export Updated File</button>
             </div>
             <table id="grid">
@@ -393,6 +499,42 @@
                 <span id="modalNavLabel"></span>
                 <button id="modalCloseBtn">Close</button>
                 <span id="modalStatus"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Renumber Modal -->
+    <div id="renumberOverlay">
+        <div id="renumberPanel">
+            <h2>&#9998; Renumber All Points</h2>
+
+            <div class="rn-row">
+                <label>Prefix (Month+Year):</label>
+                <input type="text" id="rnPrefix" maxlength="6" style="width:80px;flex:none;">
+                <span id="rnPrefixDecoded" style="font-size:12px;color:#777;font-style:italic;"></span>
+            </div>
+            <div class="rn-helper">e.g. CU = Mar 2026 &nbsp;|&nbsp; DU = Apr 2026 &nbsp;|&nbsp; MA = Jan 1980</div>
+
+            <div class="rn-row">
+                <label>Starting Number:</label>
+                <input type="number" id="rnStartNum" min="1" value="1" style="width:80px;flex:none;">
+            </div>
+            <div class="rn-helper">First point will be named prefix + this number</div>
+
+            <div class="rn-row">
+                <label>Append "N" for no elevation:</label>
+                <input type="checkbox" id="rnSuffixN">
+                <span style="font-size:12px;color:#777;">(auto-detects points with no Z value)</span>
+            </div>
+
+            <div id="rnPreviewLabel">Preview:</div>
+            <div id="rnPreviewBox">Load a file and configure options to see preview.</div>
+
+            <div id="rnStatus"></div>
+
+            <div class="rn-btnrow">
+                <button id="rnCancelBtn">Cancel</button>
+                <button id="rnApplyBtn">Apply Renumbering</button>
             </div>
         </div>
     </div>
@@ -1357,6 +1499,170 @@
                 modalStatus.textContent = '';
                 openModal(modalSortedPoints[currentModalIndex]);
             }
+        });
+
+        // ── Renumber Modal ──
+
+        // Encode/decode the two-letter month+year prefix
+        // Era 1 (1980–2005): months M–X, years A–Z (A=1980)
+        // Era 2 (2006–2031): months A–L, years A–Z (A=2006)
+        const MONTHS_ERA1 = ['M','N','O','P','Q','R','S','T','U','V','W','X']; // Jan–Dec 1980-2005
+        const MONTHS_ERA2 = ['A','B','C','D','E','F','G','H','I','J','K','L']; // Jan–Dec 2006-2031
+        const YEAR_BASE1  = 1980;
+        const YEAR_BASE2  = 2006;
+
+        function encodePrefix(month1, year) {
+            // month1 is 1-based (1=Jan)
+            if (year >= YEAR_BASE2) {
+                const mLetter = MONTHS_ERA2[month1 - 1];
+                const yLetter = String.fromCharCode(65 + (year - YEAR_BASE2)); // A=2006
+                return mLetter && yLetter ? mLetter + yLetter : null;
+            } else {
+                const mLetter = MONTHS_ERA1[month1 - 1];
+                const yLetter = String.fromCharCode(65 + (year - YEAR_BASE1)); // A=1980
+                return mLetter && yLetter ? mLetter + yLetter : null;
+            }
+        }
+
+        function decodePrefix(prefix) {
+            if (!prefix || prefix.length < 2) return null;
+            const m = prefix[0].toUpperCase();
+            const y = prefix[1].toUpperCase();
+            const yIdx = y.charCodeAt(0) - 65; // 0-based
+            if (yIdx < 0 || yIdx > 25) return null;
+
+            const era2mIdx = MONTHS_ERA2.indexOf(m);
+            const era1mIdx = MONTHS_ERA1.indexOf(m);
+
+            if (era2mIdx !== -1) {
+                const year  = YEAR_BASE2 + yIdx;
+                const month = era2mIdx + 1;
+                return { year, month };
+            } else if (era1mIdx !== -1) {
+                const year  = YEAR_BASE1 + yIdx;
+                const month = era1mIdx + 1;
+                return { year, month };
+            }
+            return null;
+        }
+
+        const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+        function currentPrefix() {
+            const now = new Date();
+            return encodePrefix(now.getMonth() + 1, now.getFullYear()) || 'CU';
+        }
+
+        const renumberOverlay = document.getElementById('renumberOverlay');
+        const rnPrefix        = document.getElementById('rnPrefix');
+        const rnPrefixDecoded = document.getElementById('rnPrefixDecoded');
+        const rnStartNum      = document.getElementById('rnStartNum');
+        const rnSuffixN       = document.getElementById('rnSuffixN');
+        const rnPreviewBox    = document.getElementById('rnPreviewBox');
+        const rnApplyBtn      = document.getElementById('rnApplyBtn');
+        const rnCancelBtn     = document.getElementById('rnCancelBtn');
+        const rnStatus        = document.getElementById('rnStatus');
+        const renumberButton  = document.getElementById('renumberButton');
+
+        function updateRnDecoded() {
+            const decoded = decodePrefix(rnPrefix.value.trim());
+            if (decoded) {
+                rnPrefixDecoded.textContent = `→ ${MONTH_NAMES[decoded.month - 1]} ${decoded.year}`;
+                rnPrefixDecoded.style.color = '#2a7a2a';
+            } else {
+                rnPrefixDecoded.textContent = rnPrefix.value.length >= 2 ? '→ unrecognized' : '';
+                rnPrefixDecoded.style.color = '#b00';
+            }
+            updateRnPreview();
+        }
+
+        function buildRenumberMap() {
+            // Returns array of { oldName, newName } in sorted order
+            if (pointData.length === 0) return [];
+            const prefix   = rnPrefix.value.trim().toUpperCase();
+            const startNum = parseInt(rnStartNum.value, 10) || 1;
+            const useN     = rnSuffixN.checked;
+
+            // Sort by current new name (numeric-aware), same as modal nav
+            const sorted = [...pointData].sort((a, b) =>
+                a[1].localeCompare(b[1], undefined, { numeric: true })
+            );
+
+            let counter = startNum;
+            return sorted.map(([oldName, _currentNew]) => {
+                // Check if this point has no elevation
+                const tp = traversePoints.find(p => p.name === oldName);
+                const hasNoZ = tp ? tp.z === null : false;
+                const suffix = (useN && hasNoZ) ? 'N' : '';
+                const newName = prefix + counter + suffix;
+                counter++;
+                return { oldName, newName };
+            });
+        }
+
+        function updateRnPreview() {
+            if (pointData.length === 0) {
+                rnPreviewBox.textContent = 'No file loaded.';
+                return;
+            }
+            const map = buildRenumberMap();
+            if (map.length === 0) {
+                rnPreviewBox.textContent = 'No points to renumber.';
+                return;
+            }
+            const lines = map.map(({ oldName, newName }) => `${oldName.padEnd(14)} →  ${newName}`);
+            rnPreviewBox.textContent = lines.join('\n');
+        }
+
+        renumberButton.addEventListener('click', () => {
+            if (pointData.length === 0) {
+                alert('Please load an RW5 file first.');
+                return;
+            }
+            rnPrefix.value = currentPrefix();
+            rnStartNum.value = 1;
+            rnSuffixN.checked = false;
+            rnStatus.textContent = '';
+            updateRnDecoded();
+            renumberOverlay.classList.add('active');
+        });
+
+        rnPrefix.addEventListener('input', updateRnDecoded);
+        rnStartNum.addEventListener('input', updateRnPreview);
+        rnSuffixN.addEventListener('change', updateRnPreview);
+
+        rnCancelBtn.addEventListener('click', () => renumberOverlay.classList.remove('active'));
+        renumberOverlay.addEventListener('click', (e) => {
+            if (e.target === renumberOverlay) renumberOverlay.classList.remove('active');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') renumberOverlay.classList.remove('active');
+        });
+
+        rnApplyBtn.addEventListener('click', () => {
+            const map = buildRenumberMap();
+            if (map.length === 0) return;
+
+            // Check for invalid prefix
+            if (decodePrefix(rnPrefix.value.trim()) === null) {
+                if (!confirm('The prefix "' + rnPrefix.value.trim() + '" is not a recognized month+year code. Apply anyway?')) return;
+            }
+
+            // Apply to pointData
+            map.forEach(({ oldName, newName }) => {
+                const entry = pointData.find(([o]) => o === oldName);
+                if (entry) entry[1] = newName;
+            });
+
+            updateFileContent();
+            updateGrid();
+            if (traversePoints.length > 0) { recomputeNeighborFlags(); redrawPlot(); }
+
+            rnStatus.textContent = `✓ Renumbered ${map.length} point${map.length !== 1 ? 's' : ''}.`;
+            rnStatus.style.color = '#2a7a2a';
+
+            // Refresh preview to show applied names
+            updateRnPreview();
         });
 
         // Canvas click — find nearest point and open modal
