@@ -308,38 +308,33 @@
         .delta-neg { color: #B71C1C; }
         #modalMergeBar {
             display: flex;
-            flex-direction: column;
-            gap: 6px;
+            flex-direction: row;
+            align-items: flex-start;
+            gap: 10px;
             border-top: 1px solid #eee;
             padding-top: 8px;
         }
-        #mergeBarTop {
+        #mergeLabelCol {
             display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 4px;
+            justify-content: center;
+            padding-top: 2px;
         }
-        #mergeBarTop label { font-weight: bold; }
+        #mergeLabelCol label { font-weight: bold; white-space: nowrap; font-size: 13px; }
+        #mergeLabelCol select { font-size: 13px; padding: 3px 6px; }
         #mergeButtonGrid {
             display: grid;
             grid-template-columns: 1fr 1fr;
             gap: 4px;
         }
-        #mergeButtonGrid button {
-            width: 100%;
-        }
-        #mergeBarBottom {
+        #mergeButtonGrid button { width: 100%; }
+        #mergeNavRight {
             display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-        #navButtonGrid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
+            flex-direction: column;
             gap: 4px;
-        }
-        #navButtonGrid button {
-            width: 100%;
+            justify-content: flex-end;
+            align-self: flex-end;
         }
         #mergeNameSelect {
             padding: 3px 6px;
@@ -688,21 +683,19 @@
             </div>
 
             <div id="modalMergeBar">
-                <div id="mergeBarTop">
+                <div id="mergeLabelCol">
                     <label>Merge checked to:</label>
                     <select id="mergeNameSelect"></select>
-                    <div id="mergeButtonGrid">
-                        <button id="modalMergeBtn">Merge</button>
-                        <button id="modalMergeNextBtn">Merge &amp; Next</button>
-                        <button id="modalMergeDescBtn">M&amp;D</button>
-                        <button id="modalMergeDescNextBtn">M&amp;D&amp;N</button>
-                    </div>
                 </div>
-                <div id="mergeBarBottom">
-                    <div id="navButtonGrid">
-                        <button id="modalPrevBtn">&#8592; Prev</button>
-                        <button id="modalNextBtn">Next &#8594;</button>
-                    </div>
+                <div id="mergeButtonGrid">
+                    <button id="modalMergeBtn">Merge</button>
+                    <button id="modalMergeNextBtn">Merge &amp; Next</button>
+                    <button id="modalMergeDescBtn">M&amp;D</button>
+                    <button id="modalMergeDescNextBtn">M&amp;D&amp;N</button>
+                    <button id="modalPrevBtn">&#8592; Prev</button>
+                    <button id="modalNextBtn">Next &#8594;</button>
+                </div>
+                <div id="mergeNavRight">
                     <span id="modalNavLabel"></span>
                     <button id="modalCloseBtn">Close</button>
                     <span id="modalStatus"></span>
@@ -2190,19 +2183,27 @@
                 if (entry && entry[1] === targetName) o.desc = newDesc;
             });
 
-            // Update the raw file content — replace -- comment on lines containing this point name
-            // Works for SP, SS, GPS, GS records
-            const oldNames = pointData
-                .filter(([o, n]) => n === targetName)
-                .map(([o]) => o);
-
-            oldNames.forEach(oldName => {
-                // Match lines with this point name (as PN, FP, OP, BP) and replace their -- comment
-                fileContent = fileContent.replace(
-                    new RegExp(`((?:SP|SS|GPS|GS|OC),(?:[^,]*,)*(?:PN|FP|OP|BP)${oldName}(?:,|\r|\n)[^\r\n]*?)--[^\r\n]*`, 'g'),
-                    `$1--${newDesc}`
-                );
+            // Update the raw file content — work on the already-renamed content line by line
+            // so we search for the NEW name (as it appears after renaming)
+            const updatedLines = fileContent.split(/\r?\n/).map(line => {
+                const upper = line.toUpperCase();
+                // Only touch SP, SS, GPS, GS lines
+                if (!/^(SP|SS|GPS|GS),/i.test(line)) return line;
+                // Check if this line references the target name via any point prefix
+                const prefixes = ['PN', 'FP', 'OP', 'BP'];
+                const hasTarget = prefixes.some(pfx => {
+                    const token = `,${pfx}${targetName}`;
+                    return line.toUpperCase().includes(token.toUpperCase());
+                });
+                if (!hasTarget) return line;
+                // Replace or append the -- comment
+                if (line.includes(',--')) {
+                    return line.replace(/,--[^\r\n]*$/, `,--${newDesc}`);
+                } else {
+                    return line.trimEnd() + `,--${newDesc}`;
+                }
             });
+            fileContent = updatedLines.join('\n');
 
             // Also update NEZ description if matched
             if (nezData.length > 0) {
