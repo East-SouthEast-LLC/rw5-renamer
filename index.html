@@ -471,7 +471,7 @@
                 <button id="renameButton">Rename Point</button>
                 <button id="zoomToPointButton">Zoom to Point</button>
                 <button id="renumberButton">Renumber Points...</button>
-                <button id="exportButton">Export Updated File</button>
+                <button id="exportButton">Export Updated RW5</button>
                 <button id="exportNezButton">Export Updated NEZ</button>
             </div>
             <table id="grid">
@@ -1225,7 +1225,28 @@
                 ctx.stroke();
             });
 
-            // Points and labels
+            // NEZ points — drawn first (behind RW5 points), blue
+            if (nezData && nezData.length > 0) {
+                nezData.forEach(nez => {
+                    const { cx, cy } = toCanvas(nez.e, nez.n); // NEZ uses e=X, n=Y
+                    if (cx < -20 || cx > W + 20 || cy < -20 || cy > H + 20) return;
+                    const displayName = nez.newName || nez.name;
+
+                    ctx.beginPath();
+                    ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+                    ctx.fillStyle = '#1565C0';
+                    ctx.fill();
+                    ctx.strokeStyle = '#0D47A1';
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+
+                    ctx.fillStyle = '#1565C0';
+                    ctx.font = '10px Arial';
+                    ctx.fillText(displayName, cx + 6, cy + 4);
+                });
+            }
+
+            // RW5 Points and labels
             traversePoints.forEach(p => {
                 const { cx, cy } = toCanvas(p.x, p.y);
 
@@ -1640,6 +1661,8 @@
                 parseNez(e.target.result);
                 nezStatusSpan.textContent = nezFileName + ' — ' + nezData.length + ' points loaded';
                 nezDropZone.classList.add('loaded');
+                // Draw NEZ points on map if RW5 is already loaded
+                if (traversePoints && traversePoints.length > 0) redrawPlot();
             };
             reader.onerror = () => alert('Error reading NEZ file.');
             reader.readAsText(file);
