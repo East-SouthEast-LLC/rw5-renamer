@@ -308,13 +308,31 @@
         .delta-neg { color: #B71C1C; }
         #modalMergeBar {
             display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-wrap: wrap;
+            flex-direction: column;
+            gap: 6px;
             border-top: 1px solid #eee;
             padding-top: 8px;
         }
-        #modalMergeBar label { font-weight: bold; }
+        #mergeBarTop {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        #mergeBarTop label { font-weight: bold; }
+        #mergeButtonGrid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+        #mergeButtonGrid button {
+            width: 100%;
+        }
+        #mergeBarBottom {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
         #mergeNameSelect {
             padding: 3px 6px;
             font-size: 13px;
@@ -341,16 +359,26 @@
             font-size: 13px;
         }
         #modalMergeNextBtn:hover { background: #0D47A1; }
-        #modalMergeDescBtn, #modalMergeDescNextBtn {
-            padding: 4px 10px;
-            background: #00838F;
+        #modalMergeDescBtn {
+            background: #4CAF50;
             color: #fff;
             border: none;
             border-radius: 3px;
             cursor: pointer;
             font-size: 13px;
+            padding: 4px 8px;
         }
-        #modalMergeDescBtn:hover, #modalMergeDescNextBtn:hover { background: #006064; }
+        #modalMergeDescBtn:hover { background: #388E3C; }
+        #modalMergeDescNextBtn {
+            background: #1565C0;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+            padding: 4px 8px;
+        }
+        #modalMergeDescNextBtn:hover { background: #0D47A1; }
         #modalCloseBtn {
             padding: 4px 14px;
             background: #9E9E9E;
@@ -652,17 +680,23 @@
             </div>
 
             <div id="modalMergeBar">
-                <label>Merge checked to:</label>
-                <select id="mergeNameSelect"></select>
-                <button id="modalMergeBtn">Merge</button>
-                <button id="modalMergeNextBtn">Merge &amp; Next</button>
-                <button id="modalMergeDescBtn">M&amp;D</button>
-                <button id="modalMergeDescNextBtn">M&amp;D&amp;N</button>
-                <button id="modalPrevBtn">&#8592; Prev</button>
-                <button id="modalNextBtn">Next &#8594;</button>
-                <span id="modalNavLabel"></span>
-                <button id="modalCloseBtn">Close</button>
-                <span id="modalStatus"></span>
+                <div id="mergeBarTop">
+                    <label>Merge checked to:</label>
+                    <select id="mergeNameSelect"></select>
+                    <div id="mergeButtonGrid">
+                        <button id="modalMergeBtn">Merge</button>
+                        <button id="modalMergeNextBtn">Merge &amp; Next</button>
+                        <button id="modalMergeDescBtn">M&amp;D</button>
+                        <button id="modalMergeDescNextBtn">M&amp;D&amp;N</button>
+                    </div>
+                </div>
+                <div id="mergeBarBottom">
+                    <button id="modalPrevBtn">&#8592; Prev</button>
+                    <button id="modalNextBtn">Next &#8594;</button>
+                    <span id="modalNavLabel"></span>
+                    <button id="modalCloseBtn">Close</button>
+                    <span id="modalStatus"></span>
+                </div>
             </div>
         </div>
     </div>
