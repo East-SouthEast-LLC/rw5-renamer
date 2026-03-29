@@ -285,6 +285,25 @@
             font-size: 13px;
         }
         #modalCloseBtn:hover { background: #616161; }
+        #modalPrevBtn, #modalNextBtn {
+            padding: 4px 14px;
+            background: #FF9800;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        #modalPrevBtn:hover, #modalNextBtn:hover { background: #F57C00; }
+        #modalPrevBtn:disabled, #modalNextBtn:disabled {
+            background: #ccc;
+            cursor: default;
+        }
+        #modalNavLabel {
+            font-size: 12px;
+            color: #777;
+            margin-left: 4px;
+        }
         #modalStatus {
             font-size: 12px;
             color: #555;
@@ -369,6 +388,9 @@
                 <label>Merge checked to:</label>
                 <select id="mergeNameSelect"></select>
                 <button id="modalMergeBtn">Merge</button>
+                <button id="modalPrevBtn">&#8592; Prev</button>
+                <button id="modalNextBtn">Next &#8594;</button>
+                <span id="modalNavLabel"></span>
                 <button id="modalCloseBtn">Close</button>
                 <span id="modalStatus"></span>
             </div>
@@ -1134,7 +1156,15 @@
         const mergeNameSelect = document.getElementById('mergeNameSelect');
         const modalMergeBtn  = document.getElementById('modalMergeBtn');
         const modalCloseBtn  = document.getElementById('modalCloseBtn');
+        const modalPrevBtn   = document.getElementById('modalPrevBtn');
+        const modalNextBtn   = document.getElementById('modalNextBtn');
+        const modalNavLabel  = document.getElementById('modalNavLabel');
         const modalStatus    = document.getElementById('modalStatus');
+
+        // Sorted list of traversePoint indices for Prev/Next navigation
+        // Rebuilt whenever the modal opens so it always reflects current sort order
+        let modalSortedPoints = [];
+        let currentModalIndex = -1;
 
         function closeModal() {
             modalOverlay.classList.remove('active');
@@ -1180,6 +1210,13 @@
         }
 
         function openModal(clickedPoint) {
+            // Rebuild sorted navigation list from current traversePoints
+            modalSortedPoints = [...traversePoints].sort((a, b) => {
+                const entry = k => { const e = pointData.find(([o]) => o === k.name); return e ? e[1] : k.name; };
+                return entry(a).localeCompare(entry(b), undefined, { numeric: true });
+            });
+            currentModalIndex = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
+            updateNavButtons();
             // Gather all obsStore entries within POPUP_RADIUS of the clicked averaged position
             const nearby = obsStore.filter(o => {
                 const dx = o.x - clickedPoint.x;
@@ -1296,6 +1333,30 @@
             redrawPlot();
 
             modalStatus.textContent = `Merged ${changed} point${changed !== 1 ? 's' : ''} → ${targetName}`;
+        });
+
+        function updateNavButtons() {
+            const total = modalSortedPoints.length;
+            const idx   = currentModalIndex;
+            modalPrevBtn.disabled = idx <= 0;
+            modalNextBtn.disabled = idx >= total - 1;
+            modalNavLabel.textContent = total > 0 ? `${idx + 1} / ${total}` : '';
+        }
+
+        modalPrevBtn.addEventListener('click', () => {
+            if (currentModalIndex > 0) {
+                currentModalIndex--;
+                modalStatus.textContent = '';
+                openModal(modalSortedPoints[currentModalIndex]);
+            }
+        });
+
+        modalNextBtn.addEventListener('click', () => {
+            if (currentModalIndex < modalSortedPoints.length - 1) {
+                currentModalIndex++;
+                modalStatus.textContent = '';
+                openModal(modalSortedPoints[currentModalIndex]);
+            }
         });
 
         // Canvas click — find nearest point and open modal
