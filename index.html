@@ -1301,12 +1301,16 @@
         }
 
         function openModal(clickedPoint) {
-            // Rebuild sorted navigation list from current traversePoints
+            // Rebuild sorted navigation list — sort by current new name (numeric-aware),
+            // old name as stable tiebreaker so merged/renumbered points stay in consistent order
             modalSortedPoints = [...traversePoints].sort((a, b) => {
-                const entry = k => { const e = pointData.find(([o]) => o === k.name); return e ? e[1] : k.name; };
-                return entry(a).localeCompare(entry(b), undefined, { numeric: true });
+                const newName = k => { const e = pointData.find(([o]) => o === k.name); return e ? e[1] : k.name; };
+                const cmp = newName(a).localeCompare(newName(b), undefined, { numeric: true });
+                if (cmp !== 0) return cmp;
+                return a.name.localeCompare(b.name, undefined, { numeric: true });
             });
             currentModalIndex = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
+            if (currentModalIndex === -1) currentModalIndex = 0;
             updateNavButtons();
             // Gather all obsStore entries within POPUP_RADIUS of the clicked averaged position
             const nearby = obsStore.filter(o => {
