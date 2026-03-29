@@ -769,6 +769,7 @@
 
         let fileContent = "";
         let originalFileContent = ""; // never mutated — used as source for all renames
+        let descChanges = {}; // oldName -> new description, applied on top of renames during export
         let pointData = [];
         let sortedPoints = [];
         let currentIndex = 0;
@@ -880,6 +881,7 @@
             reader.onload = function(e) {
                 fileContent = e.target.result;
                 originalFileContent = fileContent; // preserve pristine copy
+                descChanges = {}; // reset description overrides
                 fileContents.textContent = fileContent;
 
                 const pointNames = extractAllPointNames(fileContent);
@@ -1029,6 +1031,7 @@
             // Always start from the original file so corrections always win
             let updatedContent = originalFileContent;
 
+            // Apply name renames
             pointData.forEach(([oldName, newName]) => {
                 if (newName && newName !== oldName) {
                     [',PN', ',OP', ',BP', ',FP'].forEach((code) => {
@@ -1037,6 +1040,28 @@
                     });
                 }
             });
+
+            // Apply description changes line by line using original oldNames
+            if (Object.keys(descChanges).length > 0) {
+                updatedContent = updatedContent.split(/\r?\n/).map(line => {
+                    if (!/^(SP|SS|GPS|GS),/i.test(line)) return line;
+                    const prefixes = ['PN', 'FP', 'OP', 'BP'];
+                    // Find which oldName (if any) this line references
+                    const matchedOld = Object.keys(descChanges).find(oldName =>
+                        prefixes.some(pfx => {
+                            const token = `,${pfx}${oldName},`;
+                            return line.includes(token);
+                        })
+                    );
+                    if (!matchedOld) return line;
+                    const newDesc = descChanges[matchedOld];
+                    if (line.includes(',--')) {
+                        return line.replace(/,--[^\r\n]*$/, `,--${newDesc}`);
+                    } else {
+                        return line.trimEnd() + `,--${newDesc}`;
+                    }
+                }).join('\n');
+            }
 
             return updatedContent;
         }
@@ -2183,27 +2208,11 @@
                 if (entry && entry[1] === targetName) o.desc = newDesc;
             });
 
-            // Update the raw file content — work on the already-renamed content line by line
-            // so we search for the NEW name (as it appears after renaming)
-            const updatedLines = fileContent.split(/\r?\n/).map(line => {
-                const upper = line.toUpperCase();
-                // Only touch SP, SS, GPS, GS lines
-                if (!/^(SP|SS|GPS|GS),/i.test(line)) return line;
-                // Check if this line references the target name via any point prefix
-                const prefixes = ['PN', 'FP', 'OP', 'BP'];
-                const hasTarget = prefixes.some(pfx => {
-                    const token = `,${pfx}${targetName}`;
-                    return line.toUpperCase().includes(token.toUpperCase());
-                });
-                if (!hasTarget) return line;
-                // Replace or append the -- comment
-                if (line.includes(',--')) {
-                    return line.replace(/,--[^\r\n]*$/, `,--${newDesc}`);
-                } else {
-                    return line.trimEnd() + `,--${newDesc}`;
-                }
-            });
-            fileContent = updatedLines.join('\n');
+            // Store description change keyed by all oldNames that map to this targetName
+            // buildRenamedContent() will apply these on export
+            pointData
+                .filter(([o, n]) => n === targetName)
+                .forEach(([oldName]) => { descChanges[oldName] = newDesc; });
 
             // Also update NEZ description if matched
             if (nezData.length > 0) {
