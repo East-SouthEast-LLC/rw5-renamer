@@ -266,6 +266,16 @@
             border-radius: 3px;
             text-align: right;
         }
+        #modalRadiusApply {
+            padding: 2px 8px;
+            font-size: 12px;
+            background: #757575;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        #modalRadiusApply:hover { background: #424242; }
         #modalTable {
             border-collapse: collapse;
             width: 100%;
@@ -529,6 +539,7 @@
                     <label for="modalRadiusInput">Obs radius:</label>
                     <input type="text" id="modalRadiusInput" value="0.25" inputmode="decimal">
                     <span>ft</span>
+                    <button id="modalRadiusApply">Apply</button>
                 </div>
             </div>
             <div style="overflow-y:auto; flex:1 1 auto;">
@@ -756,7 +767,7 @@
                 console.log('');
 
                 console.log('--- obsStore (all raw observations) ---');
-                console.table(obsStore.map(o => ({
+                console.log(obsStore.map(o => ({
                     'Old Name':  o.oldName,
                     'Type':      o.type.toUpperCase(),
                     'Setup Occ': o.setupOcc || '—',
@@ -768,7 +779,7 @@
 
                 console.log('');
                 console.log('--- traversePoints (averaged markers) ---');
-                console.table(traversePoints.map(p => ({
+                console.log(traversePoints.map(p => ({
                     'Old Name':  p.name,
                     'Type':      p.type.toUpperCase(),
                     'Obs Count': p.obsCount,
@@ -783,7 +794,7 @@
                 const missingZ = obsStore.filter(o => o.type === 'ss' && o.z === null);
                 if (missingZ.length > 0) {
                     console.warn(`${missingZ.length} SS observation(s) have no elevation — missing LS record or occupied point not in elevMap:`);
-                    console.table(missingZ.map(o => ({
+                    console.log(missingZ.map(o => ({
                         'Old Name':  o.oldName,
                         'Setup Occ': o.setupOcc || '—',
                         'Desc':      o.desc || '(none)',
@@ -1414,12 +1425,7 @@
             this.value = this.value.replace(/[^0-9.]/g, '').replace(/(\..*)\./g, '$1');
         });
 
-        // Re-open current point when radius changes
-        document.getElementById('modalRadiusInput').addEventListener('change', function() {
-            if (modalOverlay.classList.contains('active') && currentModalIndex >= 0 && modalSortedPoints.length > 0) {
-                openModal(modalSortedPoints[currentModalIndex]);
-            }
-        });
+        // Radius apply is wired up after modalOverlay is defined (see below)
 
         const modalOverlay   = document.getElementById('modalOverlay');
         const modalTitle     = document.getElementById('modalTitle');
@@ -1442,6 +1448,17 @@
         }
 
         modalCloseBtn.addEventListener('click', closeModal);
+
+        // Radius apply — wired here so modalOverlay and modalSortedPoints are in scope
+        function applyRadiusChange() {
+            if (modalOverlay.classList.contains('active') && currentModalIndex >= 0 && modalSortedPoints.length > 0) {
+                openModal(modalSortedPoints[currentModalIndex]);
+            }
+        }
+        document.getElementById('modalRadiusApply').addEventListener('click', applyRadiusChange);
+        document.getElementById('modalRadiusInput').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') { e.preventDefault(); applyRadiusChange(); }
+        });
         modalOverlay.addEventListener('click', (e) => {
             if (e.target === modalOverlay) closeModal();
         });
@@ -1791,15 +1808,21 @@
             matches.forEach((r, i) => {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
-                    <td style="text-align:center"><input type="checkbox" class="nez-check" data-nez-name="${r.nez.name}" checked></td>
+                    <td style="text-align:center"><input type="checkbox" class="nez-check" data-nez-name="${r.nez.name}" data-new-name="${suggestedNewName}" data-old-name="${r.nez.name}" checked></td>
                     <td class="name-cell">${r.nez.name}</td>
-                    <td class="name-cell">${suggestedNewName}</td>
+                    <td class="name-cell nez-new-name">${suggestedNewName}</td>
                     <td>${r.nez.n.toFixed(4)}</td>
                     <td>${r.nez.e.toFixed(4)}</td>
                     <td>${r.nez.z !== null ? r.nez.z.toFixed(4) : '—'}</td>
                     <td>${r.dist.toFixed(3)}</td>
                     <td class="name-cell">${r.nez.desc || '—'}</td>
                 `;
+                // Toggle New Name cell when checkbox changes
+                const cb = tr.querySelector('.nez-check');
+                const newNameCell = tr.querySelector('.nez-new-name');
+                cb.addEventListener('change', function() {
+                    newNameCell.textContent = this.checked ? this.dataset.newName : this.dataset.oldName;
+                });
                 nezTbody.appendChild(tr);
             });
         }
