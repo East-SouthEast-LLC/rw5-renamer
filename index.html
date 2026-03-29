@@ -283,6 +283,16 @@
             font-size: 13px;
         }
         #modalMergeBtn:hover { background: #388E3C; }
+        #modalMergeNextBtn {
+            padding: 4px 14px;
+            background: #1565C0;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        #modalMergeNextBtn:hover { background: #0D47A1; }
         #modalCloseBtn {
             padding: 4px 14px;
             background: #9E9E9E;
@@ -449,6 +459,7 @@
                 <label>Merge checked to:</label>
                 <select id="mergeNameSelect"></select>
                 <button id="modalMergeBtn">Merge</button>
+                <button id="modalMergeNextBtn">Merge &amp; Next</button>
                 <button id="modalPrevBtn">&#8592; Prev</button>
                 <button id="modalNextBtn">Next &#8594;</button>
                 <span id="modalNavLabel"></span>
@@ -1398,43 +1409,35 @@
             modalTableBody.appendChild(avgTr);
 
             // Populate merge name dropdown with all unique NEW names in nearby obs
-            // default to the clicked point's own current new name
-            const clickedEntry = pointData.find(([oldName]) => oldName === clickedPoint.name);
-            const clickedNewName = clickedEntry ? clickedEntry[1] : clickedPoint.name;
+            // default to the lowest (first) name in natural sort order
             const uniqueNewNamesForMerge = [...new Set(withNames.map(o => o.newName))].sort((a, b) => {
                 const ka = naturalSortKey(a), kb = naturalSortKey(b);
                 return ka < kb ? -1 : ka > kb ? 1 : 0;
             });
             mergeNameSelect.innerHTML = uniqueNewNamesForMerge
-                .map(n => `<option value="${n}"${n === clickedNewName ? ' selected' : ''}>${n}</option>`)
+                .map((n, i) => `<option value="${n}"${i === 0 ? ' selected' : ''}>${n}</option>`)
                 .join('');
 
             modalStatus.textContent = '';
             modalOverlay.classList.add('active');
         }
 
-        // Merge button — rename all checked observations to selected name
-        modalMergeBtn.addEventListener('click', () => {
+        // Shared merge logic — returns number of changed entries, or -1 if nothing checked
+        function doMerge() {
             const targetName = mergeNameSelect.value;
-            if (!targetName) return;
+            if (!targetName) return -1;
 
             const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
-            if (checked.length === 0) {
-                modalStatus.textContent = 'No observations checked.';
-                return;
-            }
+            if (checked.length === 0) return 0;
 
-            // Apply renames in pointData — target is now a new name
-            // find all pointData entries whose current new name matches a checked row's new name
             const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
             const checkedNewNames = new Set(
                 checked.map(cb => {
                     const row = rows[parseInt(cb.dataset.idx)];
-                    return row ? row.cells[2].textContent : null; // col 2 = New Name
+                    return row ? row.cells[2].textContent : null;
                 }).filter(Boolean)
             );
 
-            // Apply renames in pointData
             let changed = 0;
             pointData.forEach(entry => {
                 if (checkedNewNames.has(entry[1])) {
@@ -1447,8 +1450,35 @@
             updateGrid();
             recomputeNeighborFlags();
             redrawPlot();
+            return changed;
+        }
 
-            modalStatus.textContent = `Merged ${changed} point${changed !== 1 ? 's' : ''} → ${targetName}`;
+        // Merge button
+        modalMergeBtn.addEventListener('click', () => {
+            const changed = doMerge();
+            if (changed === 0) {
+                modalStatus.textContent = 'No observations checked.';
+            } else if (changed > 0) {
+                modalStatus.textContent = `Merged ${changed} point${changed !== 1 ? 's' : ''} → ${mergeNameSelect.value}`;
+            }
+        });
+
+        // Merge & Next button
+        const modalMergeNextBtn = document.getElementById('modalMergeNextBtn');
+        modalMergeNextBtn.addEventListener('click', () => {
+            const changed = doMerge();
+            if (changed === 0) {
+                modalStatus.textContent = 'No observations checked.';
+                return;
+            }
+            // Advance to next point if possible, otherwise close
+            if (currentModalIndex < modalSortedPoints.length - 1) {
+                currentModalIndex++;
+                modalStatus.textContent = '';
+                openModal(modalSortedPoints[currentModalIndex]);
+            } else {
+                closeModal();
+            }
         });
 
         function updateNavButtons() {
