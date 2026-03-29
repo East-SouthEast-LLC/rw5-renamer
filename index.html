@@ -1300,14 +1300,28 @@
             return { text: s, cls: v > 0.0001 ? 'delta-pos' : v < -0.0001 ? 'delta-neg' : '' };
         }
 
+        // Natural sort: splits string into alpha/numeric chunks and compares each piece
+        // so A1 < A2 < A10 < A11, CU1 < CU2 < CU10, A01 < A02 < A10
+        function naturalSortKey(s) {
+            return s.replace(/\d+/g, n => n.padStart(10, '0'));
+        }
+
+        function getNewName(oldName) {
+            const e = pointData.find(([o]) => o === oldName);
+            return e ? e[1] : oldName;
+        }
+
         function openModal(clickedPoint) {
-            // Rebuild sorted navigation list — sort by current new name (numeric-aware),
-            // old name as stable tiebreaker so merged/renumbered points stay in consistent order
+            // Rebuild sorted navigation list by current new name using natural sort
             modalSortedPoints = [...traversePoints].sort((a, b) => {
-                const newName = k => { const e = pointData.find(([o]) => o === k.name); return e ? e[1] : k.name; };
-                const cmp = newName(a).localeCompare(newName(b), undefined, { numeric: true });
-                if (cmp !== 0) return cmp;
-                return a.name.localeCompare(b.name, undefined, { numeric: true });
+                const na = naturalSortKey(getNewName(a.name));
+                const nb = naturalSortKey(getNewName(b.name));
+                if (na < nb) return -1;
+                if (na > nb) return  1;
+                // tiebreak by old name
+                const oa = naturalSortKey(a.name);
+                const ob = naturalSortKey(b.name);
+                return oa < ob ? -1 : oa > ob ? 1 : 0;
             });
             currentModalIndex = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
             if (currentModalIndex === -1) currentModalIndex = 0;
@@ -1384,12 +1398,13 @@
             modalTableBody.appendChild(avgTr);
 
             // Populate merge name dropdown with all unique NEW names in nearby obs
-            // default to the clicked point's current new name
+            // default to the clicked point's own current new name
             const clickedEntry = pointData.find(([oldName]) => oldName === clickedPoint.name);
             const clickedNewName = clickedEntry ? clickedEntry[1] : clickedPoint.name;
-            const uniqueNewNamesForMerge = [...new Set(withNames.map(o => o.newName))].sort((a, b) =>
-                a.localeCompare(b, undefined, { numeric: true })
-            );
+            const uniqueNewNamesForMerge = [...new Set(withNames.map(o => o.newName))].sort((a, b) => {
+                const ka = naturalSortKey(a), kb = naturalSortKey(b);
+                return ka < kb ? -1 : ka > kb ? 1 : 0;
+            });
             mergeNameSelect.innerHTML = uniqueNewNamesForMerge
                 .map(n => `<option value="${n}"${n === clickedNewName ? ' selected' : ''}>${n}</option>`)
                 .join('');
