@@ -52,6 +52,20 @@
             background-color: #e1f5e1;
         }
 
+        #nezDropZone {
+            border: 2px dashed #9C27B0;
+            padding: 8px 20px;
+            text-align: center;
+            margin-bottom: 8px;
+            background-color: #f9f9f9;
+            font-size: 14px;
+            cursor: pointer;
+            flex-shrink: 0;
+            color: #555;
+        }
+        #nezDropZone.hover { background-color: #f3e5f5; }
+        #nezDropZone.loaded { background-color: #ede7f6; border-color: #6a1b9a; color: #4a148c; font-weight: bold; }
+
         /* Main layout: left fixed, right fills, takes remaining height */
         #mainLayout {
             display: flex;
@@ -374,11 +388,55 @@
             padding: 5px 16px; font-size: 13px; border: none;
             border-radius: 3px; cursor: pointer; color: #fff;
         }
+        #exportNezButton {
+            background-color: #6a1b9a !important;
+        }
+        #exportNezButton:hover {
+            background-color: #4a148c !important;
+        }
         #rnApplyBtn  { background: #9C27B0; }
         #rnApplyBtn:hover  { background: #7B1FA2; }
         #rnCancelBtn { background: #9E9E9E; }
         #rnCancelBtn:hover { background: #616161; }
         #rnStatus { font-size: 12px; color: #555; font-style: italic; min-height: 16px; }
+
+        /* NEZ section inside point detail modal */
+        #modalNezSection {
+            border-top: 2px solid #9C27B0;
+            padding-top: 8px;
+            margin-top: 4px;
+        }
+        #modalNezLabel {
+            font-weight: bold;
+            font-size: 12px;
+            color: #6a1b9a;
+            margin-bottom: 4px;
+        }
+        #modalNezTable {
+            border-collapse: collapse;
+            width: 100%;
+            font-size: 12px;
+        }
+        #modalNezTable th {
+            background: #ede7f6;
+            border: 1px solid #ce93d8;
+            padding: 3px 6px;
+            text-align: center;
+            white-space: nowrap;
+        }
+        #modalNezTable td {
+            border: 1px solid #e1bee7;
+            padding: 3px 6px;
+            text-align: right;
+            white-space: nowrap;
+        }
+        #modalNezTable td.name-cell { text-align: left; }
+        #modalNezNoMatch {
+            font-size: 12px;
+            color: #aaa;
+            font-style: italic;
+            padding: 4px 0;
+        }
     </style>
 </head>
 <body>
@@ -396,6 +454,11 @@
         <input type="file" id="fileInput" accept=".rw5,.RW5" style="display: none;">
     </div>
 
+    <div id="nezDropZone">
+        Drop a NEZ file here or click to load &nbsp;|&nbsp; <span id="nezStatus">No NEZ file loaded</span>
+        <input type="file" id="nezFileInput" accept=".nez,.NEZ" style="display:none;">
+    </div>
+
     <div id="mainLayout">
 
         <!-- LEFT PANEL -->
@@ -409,6 +472,7 @@
                 <button id="zoomToPointButton">Zoom to Point</button>
                 <button id="renumberButton">Renumber Points...</button>
                 <button id="exportButton">Export Updated File</button>
+                <button id="exportNezButton">Export Updated NEZ</button>
             </div>
             <table id="grid">
                 <thead>
@@ -455,6 +519,26 @@
                     <tbody id="modalTableBody"></tbody>
                 </table>
             </div>
+            <div id="modalNezSection" style="display:none;">
+                <div id="modalNezLabel">NEZ Match (within 0.25')</div>
+                <table id="modalNezTable">
+                    <thead>
+                        <tr>
+                            <th>&#10003;</th>
+                            <th>NEZ Name</th>
+                            <th>New Name</th>
+                            <th>N</th>
+                            <th>E</th>
+                            <th>Z</th>
+                            <th>Dist (ft)</th>
+                            <th>Desc</th>
+                        </tr>
+                    </thead>
+                    <tbody id="modalNezTableBody"></tbody>
+                </table>
+                <div id="modalNezNoMatch" style="display:none;">No NEZ points within 0.25' of this point.</div>
+            </div>
+
             <div id="modalMergeBar">
                 <label>Merge checked to:</label>
                 <select id="mergeNameSelect"></select>
@@ -565,6 +649,20 @@
         });
 
         exportButton.addEventListener('click', exportFile);
+
+        document.getElementById('exportNezButton').addEventListener('click', () => {
+            if (nezData.length === 0) {
+                alert('No NEZ file loaded.');
+                return;
+            }
+            const content = buildNezExport();
+            const outName = nezFileName.replace(/\.nez$/i, '-ESE.nez');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = outName;
+            link.click();
+        });
         zoomToPointButton.addEventListener('click', zoomToPoint);
 
         function zoomToPoint() {
@@ -1337,6 +1435,7 @@
             currentModalIndex = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
             if (currentModalIndex === -1) currentModalIndex = 0;
             updateNavButtons();
+            buildNezSection(clickedPoint);
             // Gather all obsStore entries within POPUP_RADIUS of the clicked averaged position
             const nearby = obsStore.filter(o => {
                 const dx = o.x - clickedPoint.x;
@@ -1446,6 +1545,9 @@
                 }
             });
 
+            // Apply NEZ renames for checked NEZ rows
+            applyNezRenames(targetName);
+
             updateFileContent();
             updateGrid();
             recomputeNeighborFlags();
@@ -1506,6 +1608,153 @@
                 openModal(target);
             }
         });
+
+        // ── NEZ File Handling ──
+
+        let nezData = [];       // array of { name, n, e, z, errN, errE, errZ, errAz, desc, newName }
+        let nezFileName = '';
+        const NEZ_RADIUS = 0.25; // feet proximity match threshold
+
+        const nezDropZone   = document.getElementById('nezDropZone');
+        const nezFileInput  = document.getElementById('nezFileInput');
+        const nezStatusSpan = document.getElementById('nezStatus');
+
+        nezDropZone.addEventListener('click', () => nezFileInput.click());
+
+        nezDropZone.addEventListener('dragover', e => { e.preventDefault(); nezDropZone.classList.add('hover'); });
+        nezDropZone.addEventListener('dragleave', () => nezDropZone.classList.remove('hover'));
+        nezDropZone.addEventListener('drop', e => {
+            e.preventDefault();
+            nezDropZone.classList.remove('hover');
+            const file = e.dataTransfer.files[0];
+            if (file) loadNezFile(file);
+        });
+        nezFileInput.addEventListener('change', e => {
+            if (e.target.files[0]) loadNezFile(e.target.files[0]);
+        });
+
+        function loadNezFile(file) {
+            nezFileName = file.name;
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                parseNez(e.target.result);
+                nezStatusSpan.textContent = nezFileName + ' — ' + nezData.length + ' points loaded';
+                nezDropZone.classList.add('loaded');
+            };
+            reader.onerror = () => alert('Error reading NEZ file.');
+            reader.readAsText(file);
+        }
+
+        function parseNez(content) {
+            nezData = [];
+            const lines = content.split(/\r?\n/);
+            lines.forEach(line => {
+                line = line.trim();
+                if (!line) return;
+                const parts = line.split(',');
+                if (parts.length < 4) return;
+                const name  = parts[0].trim();
+                const n     = parseFloat(parts[1]);
+                const e     = parseFloat(parts[2]);
+                const z     = parseFloat(parts[3]);
+                if (!name || isNaN(n) || isNaN(e)) return;
+                nezData.push({
+                    name,
+                    n, e,
+                    z: isNaN(z) ? null : z,
+                    errN:  parts[4] ? parts[4].trim() : '',
+                    errE:  parts[5] ? parts[5].trim() : '',
+                    errZ:  parts[6] ? parts[6].trim() : '',
+                    errAz: parts[7] ? parts[7].trim() : '',
+                    desc:  parts[8] ? parts[8].trim() : '',
+                    newName: null   // filled in when matched
+                });
+            });
+        }
+
+        function findNezMatches(pointX, pointY) {
+            // pointX = Easting, pointY = Northing (our canvas convention)
+            return nezData
+                .map(nez => {
+                    const dx = nez.e - pointX;
+                    const dy = nez.n - pointY;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    return { nez, dist };
+                })
+                .filter(r => r.dist <= NEZ_RADIUS)
+                .sort((a, b) => a.dist - b.dist);
+        }
+
+        function buildNezSection(clickedPoint) {
+            const nezSection    = document.getElementById('modalNezSection');
+            const nezTbody      = document.getElementById('modalNezTableBody');
+            const nezNoMatch    = document.getElementById('modalNezNoMatch');
+
+            nezTbody.innerHTML = '';
+
+            if (nezData.length === 0) {
+                nezSection.style.display = 'none';
+                return;
+            }
+
+            nezSection.style.display = '';
+
+            const matches = findNezMatches(clickedPoint.x, clickedPoint.y);
+
+            if (matches.length === 0) {
+                nezNoMatch.style.display = '';
+                nezTbody.closest('table').style.display = 'none';
+                return;
+            }
+
+            nezNoMatch.style.display = 'none';
+            nezTbody.closest('table').style.display = '';
+
+            // Resolve the new name for this point
+            const entry = pointData.find(([o]) => o === clickedPoint.name);
+            const suggestedNewName = entry ? entry[1] : clickedPoint.name;
+
+            matches.forEach((r, i) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td style="text-align:center"><input type="checkbox" class="nez-check" data-nez-name="${r.nez.name}" checked></td>
+                    <td class="name-cell">${r.nez.name}</td>
+                    <td class="name-cell">${suggestedNewName}</td>
+                    <td>${r.nez.n.toFixed(4)}</td>
+                    <td>${r.nez.e.toFixed(4)}</td>
+                    <td>${r.nez.z !== null ? r.nez.z.toFixed(4) : '—'}</td>
+                    <td>${r.dist.toFixed(3)}</td>
+                    <td class="name-cell">${r.nez.desc || '—'}</td>
+                `;
+                nezTbody.appendChild(tr);
+            });
+        }
+
+        function applyNezRenames(targetNewName) {
+            // For all checked NEZ rows, set their newName
+            const checks = document.querySelectorAll('.nez-check:checked');
+            checks.forEach(cb => {
+                const nezName = cb.dataset.nezName;
+                const nez = nezData.find(n => n.name === nezName);
+                if (nez) nez.newName = targetNewName;
+            });
+        }
+
+        function buildNezExport() {
+            // Rebuild NEZ with renames applied, leave unmatched points as-is
+            return nezData.map(nez => {
+                const name = nez.newName || nez.name;
+                const fields = [
+                    name,
+                    nez.n.toFixed(4),
+                    nez.e.toFixed(4),
+                    nez.z !== null ? nez.z.toFixed(4) : '',
+                    nez.errN, nez.errE, nez.errZ, nez.errAz,
+                    nez.desc
+                ];
+                return fields.join(',');
+            }).join('\r\n');
+        }
 
         // Renumber Modal logic
         (function() {
