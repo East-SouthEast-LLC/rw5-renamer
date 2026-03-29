@@ -1379,10 +1379,15 @@
             `;
             modalTableBody.appendChild(avgTr);
 
-            // Populate merge name dropdown with all unique old names in nearby obs
-            const uniqueOldNames = [...new Set(nearby.map(o => o.oldName))];
-            mergeNameSelect.innerHTML = uniqueOldNames
-                .map(n => `<option value="${n}">${n}</option>`)
+            // Populate merge name dropdown with all unique NEW names in nearby obs
+            // default to the clicked point's current new name
+            const clickedEntry = pointData.find(([oldName]) => oldName === clickedPoint.name);
+            const clickedNewName = clickedEntry ? clickedEntry[1] : clickedPoint.name;
+            const uniqueNewNamesForMerge = [...new Set(withNames.map(o => o.newName))].sort((a, b) =>
+                a.localeCompare(b, undefined, { numeric: true })
+            );
+            mergeNameSelect.innerHTML = uniqueNewNamesForMerge
+                .map(n => `<option value="${n}"${n === clickedNewName ? ' selected' : ''}>${n}</option>`)
                 .join('');
 
             modalStatus.textContent = '';
@@ -1400,19 +1405,20 @@
                 return;
             }
 
-            // Get old names of checked rows (all but the avg row)
+            // Apply renames in pointData — target is now a new name
+            // find all pointData entries whose current new name matches a checked row's new name
             const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
-            const checkedOldNames = new Set(
+            const checkedNewNames = new Set(
                 checked.map(cb => {
                     const row = rows[parseInt(cb.dataset.idx)];
-                    return row ? row.cells[1].textContent : null;
+                    return row ? row.cells[2].textContent : null; // col 2 = New Name
                 }).filter(Boolean)
             );
 
             // Apply renames in pointData
             let changed = 0;
             pointData.forEach(entry => {
-                if (checkedOldNames.has(entry[0])) {
+                if (checkedNewNames.has(entry[1])) {
                     entry[1] = targetName;
                     changed++;
                 }
