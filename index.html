@@ -333,6 +333,14 @@
             align-items: center;
             gap: 8px;
         }
+        #navButtonGrid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+        #navButtonGrid button {
+            width: 100%;
+        }
         #mergeNameSelect {
             padding: 3px 6px;
             font-size: 13px;
@@ -691,8 +699,10 @@
                     </div>
                 </div>
                 <div id="mergeBarBottom">
-                    <button id="modalPrevBtn">&#8592; Prev</button>
-                    <button id="modalNextBtn">Next &#8594;</button>
+                    <div id="navButtonGrid">
+                        <button id="modalPrevBtn">&#8592; Prev</button>
+                        <button id="modalNextBtn">Next &#8594;</button>
+                    </div>
                     <span id="modalNavLabel"></span>
                     <button id="modalCloseBtn">Close</button>
                     <span id="modalStatus"></span>
