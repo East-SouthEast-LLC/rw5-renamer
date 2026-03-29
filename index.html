@@ -341,6 +341,16 @@
             font-size: 13px;
         }
         #modalMergeNextBtn:hover { background: #0D47A1; }
+        #modalMergeDescBtn, #modalMergeDescNextBtn {
+            padding: 4px 10px;
+            background: #00838F;
+            color: #fff;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+        #modalMergeDescBtn:hover, #modalMergeDescNextBtn:hover { background: #006064; }
         #modalCloseBtn {
             padding: 4px 14px;
             background: #9E9E9E;
@@ -433,6 +443,66 @@
         #rnCancelBtn { background: #9E9E9E; }
         #rnCancelBtn:hover { background: #616161; }
         #rnStatus { font-size: 12px; color: #555; font-style: italic; min-height: 16px; }
+
+        /* Description dialog */
+        #descOverlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.45);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        #descOverlay.active { display: flex; }
+        #descPanel {
+            background: #fff;
+            border-radius: 6px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.28);
+            padding: 18px 22px 14px;
+            min-width: 380px;
+            max-width: 90vw;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            font-size: 13px;
+        }
+        #descPanel h3 { margin: 0; font-size: 14px; color: #333; }
+        #descPanel label { font-weight: bold; color: #444; font-size: 12px; }
+        #descSelect {
+            width: 100%;
+            padding: 5px 7px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        #descCustom {
+            width: 100%;
+            padding: 5px 7px;
+            font-size: 13px;
+            border: 1px solid #ccc;
+            border-radius: 3px;
+        }
+        #descHint { font-size: 11px; color: #888; margin-top: -6px; }
+        .desc-btnrow {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            border-top: 1px solid #eee;
+            padding-top: 10px;
+        }
+        .desc-btnrow button {
+            padding: 5px 16px;
+            font-size: 13px;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            color: #fff;
+        }
+        #descApplyBtn  { background: #4CAF50; }
+        #descApplyBtn:hover  { background: #388E3C; }
+        #descCancelBtn { background: #9E9E9E; }
+        #descCancelBtn:hover { background: #616161; }
 
         /* NEZ section inside point detail modal */
         #modalNezSection {
@@ -586,6 +656,8 @@
                 <select id="mergeNameSelect"></select>
                 <button id="modalMergeBtn">Merge</button>
                 <button id="modalMergeNextBtn">Merge &amp; Next</button>
+                <button id="modalMergeDescBtn">M&amp;D</button>
+                <button id="modalMergeDescNextBtn">M&amp;D&amp;N</button>
                 <button id="modalPrevBtn">&#8592; Prev</button>
                 <button id="modalNextBtn">Next &#8594;</button>
                 <span id="modalNavLabel"></span>
@@ -621,6 +693,26 @@
             <div class="rn-btnrow">
                 <button id="rnCancelBtn">Cancel</button>
                 <button id="rnApplyBtn">Apply Renumbering</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Description Dialog -->
+    <div id="descOverlay">
+        <div id="descPanel">
+            <h3>&#9998; Set Description</h3>
+            <div>
+                <label>Choose existing description:</label>
+                <select id="descSelect"></select>
+            </div>
+            <div>
+                <label>Or enter a custom description:</label>
+                <input type="text" id="descCustom" placeholder="Type new description...">
+                <div id="descHint">Leave blank to use selection above</div>
+            </div>
+            <div class="desc-btnrow">
+                <button id="descCancelBtn">Cancel</button>
+                <button id="descApplyBtn">Apply</button>
             </div>
         </div>
     </div>
@@ -1980,6 +2072,141 @@
                 updatePreview();
             });
         })();
+
+        // ── Description Dialog ──
+
+        const descOverlay      = document.getElementById('descOverlay');
+        const descSelect       = document.getElementById('descSelect');
+        const descCustom       = document.getElementById('descCustom');
+        const descApplyBtn     = document.getElementById('descApplyBtn');
+        const descCancelBtn    = document.getElementById('descCancelBtn');
+        const modalMergeDescBtn     = document.getElementById('modalMergeDescBtn');
+        const modalMergeDescNextBtn = document.getElementById('modalMergeDescNextBtn');
+
+        let descResolve = null; // promise resolver — set when dialog is open
+
+        function openDescDialog(existingDescs) {
+            // Populate dropdown with unique non-empty descriptions
+            const unique = [...new Set(existingDescs.filter(d => d && d.trim()))];
+            descSelect.innerHTML = unique
+                .map(d => `<option value="${d}">${d}</option>`)
+                .join('');
+            // Pre-fill custom with first/only value
+            descCustom.value = '';
+            descOverlay.classList.add('active');
+            descCustom.focus();
+
+            return new Promise(resolve => { descResolve = resolve; });
+        }
+
+        function closeDescDialog(result) {
+            descOverlay.classList.remove('active');
+            if (descResolve) { descResolve(result); descResolve = null; }
+        }
+
+        descApplyBtn.addEventListener('click', () => {
+            const val = descCustom.value.trim() || descSelect.value || '';
+            closeDescDialog(val);
+        });
+
+        descCancelBtn.addEventListener('click', () => closeDescDialog(null));
+
+        descCustom.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); descApplyBtn.click(); }
+            if (e.key === 'Escape') closeDescDialog(null);
+        });
+
+        // When a dropdown option is selected, populate the custom field
+        descSelect.addEventListener('change', () => {
+            descCustom.value = descSelect.value;
+        });
+
+        // Gather descriptions from currently checked RW5 rows
+        function getCheckedDescs() {
+            const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
+            const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
+            return checked.map(cb => {
+                const row = rows[parseInt(cb.dataset.idx)];
+                return row ? row.cells[9].textContent.replace('—','').trim() : '';
+            }).filter(Boolean);
+        }
+
+        // Apply a description to all pointData entries matching the target name
+        // Updates both the in-memory desc and the file content (-- comment on SP/SS/GPS lines)
+        function applyDescription(targetName, newDesc) {
+            if (!newDesc) return;
+
+            // Update desc in traversePoints and obsStore for display
+            traversePoints.forEach(p => {
+                const entry = pointData.find(([o]) => o === p.name);
+                if (entry && entry[1] === targetName) p.desc = newDesc;
+            });
+            obsStore.forEach(o => {
+                const entry = pointData.find(([old]) => old === o.oldName);
+                if (entry && entry[1] === targetName) o.desc = newDesc;
+            });
+
+            // Update the raw file content — replace -- comment on lines containing this point name
+            // Works for SP, SS, GPS, GS records
+            const oldNames = pointData
+                .filter(([o, n]) => n === targetName)
+                .map(([o]) => o);
+
+            oldNames.forEach(oldName => {
+                // Match lines with this point name (as PN, FP, OP, BP) and replace their -- comment
+                fileContent = fileContent.replace(
+                    new RegExp(`((?:SP|SS|GPS|GS|OC),(?:[^,]*,)*(?:PN|FP|OP|BP)${oldName}(?:,|\r|\n)[^\r\n]*?)--[^\r\n]*`, 'g'),
+                    `$1--${newDesc}`
+                );
+            });
+
+            // Also update NEZ description if matched
+            if (nezData.length > 0) {
+                nezData.forEach(nez => {
+                    if (nez.newName === targetName) nez.desc = newDesc;
+                });
+            }
+        }
+
+        async function doMergeWithDesc(andNext) {
+            // Gather descs BEFORE merge changes names
+            const descs = getCheckedDescs();
+            const nextPoint = andNext && currentModalIndex < modalSortedPoints.length - 1
+                ? modalSortedPoints[currentModalIndex + 1]
+                : null;
+
+            const changed = doMerge();
+            if (changed === 0) {
+                modalStatus.textContent = 'No observations checked.';
+                return;
+            }
+
+            const targetName = mergeNameSelect.value;
+
+            // Open description dialog
+            const chosenDesc = await openDescDialog(descs);
+            if (chosenDesc !== null) {
+                applyDescription(targetName, chosenDesc);
+                refreshViewport();
+                redrawPlot();
+            }
+
+            if (andNext) {
+                if (nextPoint) {
+                    modalStatus.textContent = '';
+                    openModal(nextPoint);
+                } else {
+                    closeModal();
+                }
+            } else {
+                modalStatus.textContent = chosenDesc !== null
+                    ? `Merged + desc set → ${targetName}`
+                    : `Merged → ${targetName} (desc unchanged)`;
+            }
+        }
+
+        modalMergeDescBtn.addEventListener('click', () => doMergeWithDesc(false));
+        modalMergeDescNextBtn.addEventListener('click', () => doMergeWithDesc(true));
 
         // Canvas click — find nearest point and open modal
         plotCanvas.addEventListener('click', (e) => {
