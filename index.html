@@ -1210,6 +1210,13 @@
                         if (hr) p15hr = parseFloat(hr[1]);
                     }
                     if (line.startsWith('BK,')) {
+                        const parts = line.split(',');
+                        // Seed p15occ from BK's OP field if no OC record preceded it
+                        if (parts[1] && parts[1].startsWith('OP')) {
+                            const bkOcc = parts[1].substring(2).trim();
+                            if (!p15occ) p15occ = bkOcc;
+                            // If OC was missing but SP has coords, that's fine — coordMap already has it
+                        }
                         const bsM = line.match(/,BS([\d.]+)/);
                         if (bsM) p15bsAz = dmsToRad(parseFloat(bsM[1]));
                     }
@@ -1292,6 +1299,15 @@
                 // BK / BD — backsight
                 if (line.startsWith('BK,') || line.startsWith('BD,')) {
                     const parts = line.split(',');
+                    // Seed occName from BK's OP field if no OC record preceded this setup
+                    if (line.startsWith('BK,') && parts[1] && parts[1].startsWith('OP')) {
+                        const bkOcc = parts[1].substring(2).trim();
+                        if (!occName) {
+                            occName = bkOcc;
+                            // Pull inline coords from coordMap if available (set via SP)
+                            bsAzimuth = null;
+                        }
+                    }
                     if (parts[2] && parts[2].startsWith('BP')) {
                         bsName = parts[2].substring(2).trim();
                     }
