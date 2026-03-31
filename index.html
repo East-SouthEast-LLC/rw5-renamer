@@ -889,7 +889,7 @@
                 pointData = pointNames.map((point) => [point, point]);
                 updateGrid();
 
-                traversePoints = parseTraversePoints(fileContent);
+                traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
                 recomputeNeighborFlags();
 
                 // --- Console diagnostic dump ---
@@ -1130,10 +1130,24 @@
         // Each entry: { oldName, x(E), y(N), z(elev or null), desc, type('sp'|'ss'), setupOcc }
         let obsStore = [];
 
-        function parseTraversePoints(content) {
+        function parseTraversePoints(content, nezSeed) {
             const lines = content.split('\n');
             const coordMap = {}; // oldName -> { x, y }
             const elevMap  = {}; // oldName -> elevation (carried forward through traverse)
+
+            // Pre-seed coordMap and elevMap from NEZ if provided
+            // This lets the parser resolve backsight points that have no SP record
+            if (nezSeed && nezSeed.length > 0) {
+                nezSeed.forEach(nez => {
+                    const name = nez.newName || nez.name;
+                    if (!coordMap[name]) {
+                        coordMap[name] = { x: nez.e, y: nez.n };
+                    }
+                    if (nez.z !== null && elevMap[name] === undefined) {
+                        elevMap[name] = nez.z;
+                    }
+                });
+            }
 
             obsStore = []; // reset
 
@@ -1174,11 +1188,12 @@
             });
 
             // --- Pass 2: walk records in order for OC/LS/BK/SS ---
-            let occName  = null;
-            let bsName   = null;
-            let currentHI = null;
-            let currentHR = null;
-            traverseLines = [];
+            let occName    = null;
+            let bsName     = null;
+            let bsAzimuth  = null; // fallback when bsName has no coords — from BK,BS field
+            let currentHI  = null;
+            let currentHR  = null;
+            traverseLines  = [];
 
             lines.forEach(line => {
                 line = line.trim();
@@ -1187,7 +1202,8 @@
                 if (line.startsWith('OC,')) {
                     const parts = line.split(',');
                     if (parts[1] && parts[1].startsWith('OP')) {
-                        occName = parts[1].substring(2).trim();
+                        occName   = parts[1].substring(2).trim();
+                        bsAzimuth = null; // reset — will be set by BK record
                         // Inline coords on OC (if present and not already known)
                         const nMatch = line.match(/,N\s*([\d.]+)/);
                         const eMatch = line.match(/,E\s*([\d.]+)/);
@@ -1214,14 +1230,30 @@
                     if (parts[2] && parts[2].startsWith('BP')) {
                         bsName = parts[2].substring(2).trim();
                     }
+                    // Capture BS azimuth for fallback when backsight point has no coords
+                    const bsMatch = line.match(/,BS([\d.]+)/);
+                    if (bsMatch) {
+                        bsAzimuth = dmsToRad(parseFloat(bsMatch[1]));
+                    }
                 }
 
                 // SS — sideshot
                 if (line.startsWith('SS,')) {
-                    if (!occName || !bsName) return;
+                    if (!occName) return;
                     const occ = coordMap[occName];
-                    const bs  = coordMap[bsName];
-                    if (!occ || !bs) return;
+                    if (!occ) return;
+
+                    // Determine backsight azimuth:
+                    // Prefer computing from two known points; fall back to BK,BS azimuth
+                    const bs = bsName ? coordMap[bsName] : null;
+                    let azBS = null;
+                    if (bs) {
+                        azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
+                    } else if (bsAzimuth !== null) {
+                        azBS = bsAzimuth; // use recorded azimuth directly
+                    } else {
+                        return; // no way to resolve orientation
+                    }
 
                     const fpMatch   = line.match(/,FP([A-Za-z0-9]+),/);
                     const arMatch   = line.match(/,AR([\d.]+)/);
@@ -1239,7 +1271,6 @@
 
                     // Horizontal position
                     const hd   = sd * Math.sin(ze);
-                    const azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
                     const azFP = azBS + ar;
                     const fpN  = occ.y + hd * Math.cos(azFP);
                     const fpE  = occ.x + hd * Math.sin(azFP);
@@ -1882,8 +1913,11 @@
                 parseNez(e.target.result);
                 nezStatusSpan.textContent = nezFileName + ' — ' + nezData.length + ' points loaded';
                 nezDropZone.classList.add('loaded');
-                // Draw NEZ points on map if RW5 is already loaded
-                if (traversePoints && traversePoints.length > 0) redrawPlot();
+                // If RW5 is loaded, try to fill missing coords from NEZ
+                if (traversePoints && traversePoints.length > 0) {
+                    injectNezCoords();
+                    redrawPlot();
+                }
             };
             reader.onerror = () => alert('Error reading NEZ file.');
             reader.readAsText(file);
@@ -1927,6 +1961,17 @@
                 })
                 .filter(r => r.dist <= getPopupRadius())
                 .sort((a, b) => a.dist - b.dist);
+        }
+
+        // Fill coordMap entries for any RW5 points that couldn't be resolved,
+        // using NEZ coordinates matched by name
+        function injectNezCoords() {
+            if (!nezData || nezData.length === 0) return;
+            // Re-run parseTraversePoints with NEZ coords seeded into coordMap
+            // by patching obsStore entries that have null x/y
+            // Actually simpler: re-parse the file now that NEZ is available
+            traversePoints = parseTraversePoints(originalFileContent, nezData);
+            recomputeNeighborFlags();
         }
 
         function buildNezSection(clickedPoint) {
