@@ -1727,15 +1727,30 @@
         modalCloseBtn.addEventListener('click', closeModal);
 
         // Show inline text input when -- New -- is selected
+        // Also update New Name cells in the RW5 table to reflect the dropdown choice
+        function updateRW5NewNameCells(name) {
+            document.querySelectorAll('#modalTableBody .rw5-new-name').forEach(cell => {
+                if (name) cell.textContent = name;
+            });
+        }
+
         mergeNameSelect.addEventListener('change', function() {
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
             if (this.value === '__NEW__') {
                 mergeNewNameInput.style.display = '';
                 mergeNewNameInput.focus();
+                // Clear cells until user types something
+                updateRW5NewNameCells('');
             } else {
                 mergeNewNameInput.style.display = 'none';
                 mergeNewNameInput.value = '';
+                updateRW5NewNameCells(this.value);
             }
+        });
+
+        // Also update as user types in the new name box
+        document.getElementById('mergeNewNameInput').addEventListener('input', function() {
+            updateRW5NewNameCells(this.value.trim());
         });
 
         // Radius apply — wired here so modalOverlay and modalSortedPoints are in scope
@@ -1858,7 +1873,7 @@
                 tr.innerHTML = `
                     <td style="text-align:center"><input type="checkbox" class="obs-check" data-idx="${i}" checked></td>
                     <td class="name-cell">${o.oldName}</td>
-                    <td class="name-cell">${o.newName}</td>
+                    <td class="name-cell rw5-new-name">${o.newName}</td>
                     <td>${fmt(o.y, 4)}</td>
                     <td>${fmt(o.x, 4)}</td>
                     <td>${fmt(o.z, 4)}</td>
@@ -1922,6 +1937,13 @@
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
             mergeNewNameInput.style.display = 'none';
             mergeNewNameInput.value = '';
+
+            // Update RW5 New Name cells to reflect the default dropdown selection
+            // (deferred so the table rows are built first)
+            setTimeout(() => {
+                const defaultName = mergeNameSelect.value !== '__NEW__' ? mergeNameSelect.value : '';
+                if (defaultName) updateRW5NewNameCells(defaultName);
+            }, 0);
 
             modalStatus.textContent = '';
             modalOverlay.classList.add('active');
