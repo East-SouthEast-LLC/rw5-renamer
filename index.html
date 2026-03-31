@@ -1982,16 +1982,16 @@
             if (checked.length === 0) return 0;
 
             const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
-            const checkedNewNames = new Set(
+            const checkedOldNames = new Set(
                 checked.map(cb => {
                     const row = rows[parseInt(cb.dataset.idx)];
-                    return row ? row.cells[2].textContent : null;
+                    return row ? row.cells[1].textContent : null; // col 1 = Old Name, never changes
                 }).filter(Boolean)
             );
 
             let changed = 0;
             pointData.forEach(entry => {
-                if (checkedNewNames.has(entry[1])) {
+                if (checkedOldNames.has(entry[0])) {
                     entry[1] = targetName;
                     changed++;
                 }
