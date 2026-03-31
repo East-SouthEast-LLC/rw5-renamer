@@ -1729,8 +1729,18 @@
         // Show inline text input when -- New -- is selected
         // Also update New Name cells in the RW5 table to reflect the dropdown choice
         function updateRW5NewNameCells(name) {
+            if (!name) return;
+            // Update RW5 New Name cells
             document.querySelectorAll('#modalTableBody .rw5-new-name').forEach(cell => {
-                if (name) cell.textContent = name;
+                cell.textContent = name;
+            });
+            // Update NEZ New Name cells (checked rows only — unchecked show old name)
+            document.querySelectorAll('#modalNezTableBody .nez-new-name').forEach(cell => {
+                const cb = cell.closest('tr').querySelector('.nez-check');
+                if (cb && cb.checked) {
+                    cb.dataset.newName = name; // keep data in sync for checkbox toggle
+                    cell.textContent = name;
+                }
             });
         }
 
@@ -2189,7 +2199,14 @@
                 const cb = tr.querySelector('.nez-check');
                 const newNameCell = tr.querySelector('.nez-new-name');
                 cb.addEventListener('change', function() {
-                    newNameCell.textContent = this.checked ? this.dataset.newName : this.dataset.oldName;
+                    if (this.checked) {
+                        // Use current dropdown/input value as the live new name
+                        const live = getMergeTarget() || this.dataset.newName;
+                        this.dataset.newName = live;
+                        newNameCell.textContent = live;
+                    } else {
+                        newNameCell.textContent = this.dataset.oldName;
+                    }
                 });
                 nezTbody.appendChild(tr);
             });
