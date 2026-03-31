@@ -1187,6 +1187,71 @@
                 obsStore.push({ oldName: name, x: e, y: n, z: (z !== null && !isNaN(z)) ? z : null, desc, type: 'sp', setupOcc: null });
             });
 
+            // --- Pass 1.5: synthesize missing backsight coords from BD records ---
+            // Walk records tracking OC/BK/BD in order.
+            // If a BD target has no coords, compute them from the OC position + BS azimuth + SD/ZE.
+            // This lets chained setups work when the backsight point has no SP record.
+            {
+                let p15occ = null, p15bsAz = null, p15hi = null, p15hr = null;
+                lines.forEach(line => {
+                    line = line.trim();
+                    if (line.startsWith('OC,')) {
+                        const parts = line.split(',');
+                        if (parts[1] && parts[1].startsWith('OP')) {
+                            p15occ = parts[1].substring(2).trim();
+                            p15bsAz = null;
+                        }
+                        p15hi = null; p15hr = null;
+                    }
+                    if (line.startsWith('LS,')) {
+                        const hi = line.match(/,HI([\d.]+)/);
+                        const hr = line.match(/,HR([\d.]+)/);
+                        if (hi) p15hi = parseFloat(hi[1]);
+                        if (hr) p15hr = parseFloat(hr[1]);
+                    }
+                    if (line.startsWith('BK,')) {
+                        const bsM = line.match(/,BS([\d.]+)/);
+                        if (bsM) p15bsAz = dmsToRad(parseFloat(bsM[1]));
+                    }
+                    if (line.startsWith('BD,')) {
+                        // Also capture azimuth from BD if BK didn't have one
+                        const bsM = line.match(/,BS([\d.]+)/);
+                        if (bsM && p15bsAz === null) p15bsAz = dmsToRad(parseFloat(bsM[1]));
+
+                        const fpM  = line.match(/,FP([A-Za-z0-9]+),/);
+                        const arM  = line.match(/,AR([\d.]+)/);
+                        const sdM  = line.match(/,SD([\d.]+)/);
+                        const zeM  = line.match(/,ZE([\d.]+)/);
+                        if (!fpM || !arM || !sdM || !zeM) return;
+
+                        const fpName = fpM[1].trim();
+                        if (coordMap[fpName]) return; // already known
+
+                        const occ = p15occ ? coordMap[p15occ] : null;
+                        if (!occ || p15bsAz === null) return;
+
+                        // Compute position: azimuth = bsAz + AR (AR=0 for BD so azFP = bsAz)
+                        const ar  = dmsToRad(parseFloat(arM[1]));
+                        const sd  = parseFloat(sdM[1]);
+                        const ze  = dmsToRad(parseFloat(zeM[1]));
+                        const hd  = sd * Math.sin(ze);
+                        const azFP = p15bsAz + ar;
+                        const fpN = occ.y + hd * Math.cos(azFP);
+                        const fpE = occ.x + hd * Math.sin(azFP);
+                        if (isNaN(fpN) || isNaN(fpE)) return;
+
+                        coordMap[fpName] = { x: fpE, y: fpN };
+
+                        // Elevation if possible
+                        const occElev = elevMap[p15occ];
+                        if (occElev !== undefined && p15hi !== null && p15hr !== null) {
+                            elevMap[fpName] = occElev + p15hi + sd * Math.cos(ze) - p15hr;
+                        }
+                        console.log(`[Pass 1.5] Synthesized coords for ${fpName} from BD record via ${p15occ} az=${(p15bsAz*180/Math.PI).toFixed(4)}`);
+                    }
+                });
+            }
+
             // --- Pass 2: walk records in order for OC/LS/BK/SS ---
             let occName    = null;
             let bsName     = null;
