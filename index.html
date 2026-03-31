@@ -322,7 +322,15 @@
             padding-top: 2px;
         }
         #mergeLabelCol label { font-weight: bold; white-space: nowrap; font-size: 13px; }
+        #mergeSelectRow { display: flex; flex-direction: column; gap: 3px; }
         #mergeLabelCol select { font-size: 13px; padding: 3px 6px; }
+        #mergeNewNameInput {
+            font-size: 13px;
+            padding: 3px 6px;
+            border: 2px solid #9C27B0;
+            border-radius: 3px;
+            width: 100%;
+        }
         #mergeButtonGrid {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -685,7 +693,10 @@
             <div id="modalMergeBar">
                 <div id="mergeLabelCol">
                     <label>Merge checked to:</label>
-                    <select id="mergeNameSelect"></select>
+                    <div id="mergeSelectRow">
+                        <select id="mergeNameSelect"></select>
+                        <input type="text" id="mergeNewNameInput" placeholder="Enter new name..." style="display:none;">
+                    </div>
                 </div>
                 <div id="mergeButtonGrid">
                     <button id="modalMergeBtn">Merge</button>
@@ -1715,6 +1726,18 @@
 
         modalCloseBtn.addEventListener('click', closeModal);
 
+        // Show inline text input when -- New -- is selected
+        mergeNameSelect.addEventListener('change', function() {
+            const mergeNewNameInput = document.getElementById('mergeNewNameInput');
+            if (this.value === '__NEW__') {
+                mergeNewNameInput.style.display = '';
+                mergeNewNameInput.focus();
+            } else {
+                mergeNewNameInput.style.display = 'none';
+                mergeNewNameInput.value = '';
+            }
+        });
+
         // Radius apply — wired here so modalOverlay and modalSortedPoints are in scope
         function applyRadiusChange() {
             if (modalOverlay.classList.contains('active') && currentModalIndex >= 0 && modalSortedPoints.length > 0) {
@@ -1861,24 +1884,67 @@
             `;
             modalTableBody.appendChild(avgTr);
 
-            // Populate merge name dropdown with all unique NEW names in nearby obs
-            // default to the lowest (first) name in natural sort order
-            const uniqueNewNamesForMerge = [...new Set(withNames.map(o => o.newName))].sort((a, b) => {
+            // Populate merge name dropdown:
+            // Groups: NEZ matches first (default), then RW5 new names, then -- New --
+            const uniqueRW5Names = [...new Set(withNames.map(o => o.newName))].sort((a, b) => {
                 const ka = naturalSortKey(a), kb = naturalSortKey(b);
                 return ka < kb ? -1 : ka > kb ? 1 : 0;
             });
-            mergeNameSelect.innerHTML = uniqueNewNamesForMerge
-                .map((n, i) => `<option value="${n}"${i === 0 ? ' selected' : ''}>${n}</option>`)
-                .join('');
+
+            // Gather NEZ names matched to this point cluster
+            const nearbyNezMatches = findNezMatches(clickedPoint.x, clickedPoint.y);
+            const nezNames = nearbyNezMatches.map(r => r.nez.name);
+
+            // Build option groups
+            let optionsHtml = '';
+
+            if (nezNames.length > 0) {
+                optionsHtml += `<optgroup label="NEZ">`;
+                nezNames.forEach((n, i) => {
+                    optionsHtml += `<option value="${n}"${i === 0 ? ' selected' : ''}>${n}</option>`;
+                });
+                optionsHtml += `</optgroup>`;
+            }
+
+            if (uniqueRW5Names.length > 0) {
+                optionsHtml += `<optgroup label="RW5">`;
+                uniqueRW5Names.forEach((n, i) => {
+                    const sel = nezNames.length === 0 && i === 0 ? ' selected' : '';
+                    optionsHtml += `<option value="${n}"${sel}>${n}</option>`;
+                });
+                optionsHtml += `</optgroup>`;
+            }
+
+            optionsHtml += `<option value="__NEW__">-- New --</option>`;
+            mergeNameSelect.innerHTML = optionsHtml;
+
+            // Show/hide inline new name input
+            const mergeNewNameInput = document.getElementById('mergeNewNameInput');
+            mergeNewNameInput.style.display = 'none';
+            mergeNewNameInput.value = '';
 
             modalStatus.textContent = '';
             modalOverlay.classList.add('active');
         }
 
+        // Resolve the current merge target name — from dropdown or inline text input
+        function getMergeTarget() {
+            const mergeNewNameInput = document.getElementById('mergeNewNameInput');
+            if (mergeNameSelect.value === '__NEW__') {
+                const typed = mergeNewNameInput.value.trim();
+                return typed || null;
+            }
+            return mergeNameSelect.value || null;
+        }
+
         // Shared merge logic — returns number of changed entries, or -1 if nothing checked
         function doMerge() {
-            const targetName = mergeNameSelect.value;
-            if (!targetName) return -1;
+            const targetName = getMergeTarget();
+            if (!targetName) {
+                modalStatus.textContent = mergeNameSelect.value === '__NEW__'
+                    ? 'Please enter a new name.' : 'No target name selected.';
+                return -1;
+            }
 
             const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
             if (checked.length === 0) return 0;
@@ -1915,7 +1981,7 @@
             if (changed === 0) {
                 modalStatus.textContent = 'No observations checked.';
             } else if (changed > 0) {
-                modalStatus.textContent = `Merged ${changed} point${changed !== 1 ? 's' : ''} → ${mergeNameSelect.value}`;
+                modalStatus.textContent = `Merged ${changed} point${changed !== 1 ? 's' : ''} → ${getMergeTarget()}`;
             }
         });
 
@@ -2361,7 +2427,7 @@
                 return;
             }
 
-            const targetName = mergeNameSelect.value;
+            const targetName = getMergeTarget();
 
             // Open description dialog
             const chosenDesc = await openDescDialog(descs);
