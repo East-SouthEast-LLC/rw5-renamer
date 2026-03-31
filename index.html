@@ -1719,6 +1719,7 @@
         // Rebuilt whenever the modal opens so it always reflects current sort order
         let modalSortedPoints = [];
         let currentModalIndex = -1;
+        let lastCustomName = null; // tracks last typed custom name for +1 incrementing
 
         function closeModal() {
             modalOverlay.classList.remove('active');
@@ -1748,9 +1749,13 @@
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
             if (this.value === '__NEW__') {
                 mergeNewNameInput.style.display = '';
+                // Pre-fill with lastCustomName + 1 if we have one
+                const suggested = incrementName(lastCustomName);
+                mergeNewNameInput.value = suggested || '';
+                if (suggested) updateRW5NewNameCells(suggested);
+                else updateRW5NewNameCells('');
                 mergeNewNameInput.focus();
-                // Clear cells until user types something
-                updateRW5NewNameCells('');
+                mergeNewNameInput.select();
             } else {
                 mergeNewNameInput.style.display = 'none';
                 mergeNewNameInput.value = '';
@@ -1951,12 +1956,33 @@
             // Update RW5 New Name cells to reflect the default dropdown selection
             // (deferred so the table rows are built first)
             setTimeout(() => {
-                const defaultName = mergeNameSelect.value !== '__NEW__' ? mergeNameSelect.value : '';
-                if (defaultName) updateRW5NewNameCells(defaultName);
+                if (mergeNameSelect.value === '__NEW__') {
+                    const suggested = incrementName(lastCustomName) || '';
+                    document.getElementById('mergeNewNameInput').value = suggested;
+                    document.getElementById('mergeNewNameInput').style.display = '';
+                    if (suggested) updateRW5NewNameCells(suggested);
+                } else {
+                    const defaultName = mergeNameSelect.value;
+                    if (defaultName) updateRW5NewNameCells(defaultName);
+                }
             }, 0);
 
             modalStatus.textContent = '';
             modalOverlay.classList.add('active');
+        }
+
+        // Increment a point name by finding its trailing number and adding 1
+        // e.g. CU201 -> CU202, A9 -> A10, CU201N -> CU202N
+        function incrementName(name) {
+            if (!name) return null;
+            const m = name.match(/^(.*?)(\d+)([A-Za-z]*)$/);
+            if (!m) return null;
+            const prefix = m[1];
+            const num    = parseInt(m[2], 10);
+            const width  = m[2].length; // preserve zero-padding: 01 -> 02
+            const suffix = m[3];
+            const nextNum = String(num + 1).padStart(width, '0');
+            return prefix + nextNum + suffix;
         }
 
         // Resolve the current merge target name — from dropdown or inline text input
@@ -1996,6 +2022,11 @@
                     changed++;
                 }
             });
+
+            // Track last custom name for +1 incrementing
+            if (mergeNameSelect.value === '__NEW__') {
+                lastCustomName = targetName;
+            }
 
             // Apply NEZ renames for checked NEZ rows
             applyNezRenames(targetName);
