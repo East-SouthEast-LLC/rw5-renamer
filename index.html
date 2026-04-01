@@ -1379,7 +1379,7 @@
                     coordMap[fpName] = { x: fpE, y: fpN };
                     if (fpZ !== null) elevMap[fpName] = fpZ;
 
-                    obsStore.push({ oldName: fpName, x: fpE, y: fpN, z: fpZ, desc, type: 'ss', setupOcc: occName });
+                    obsStore.push({ oldName: fpName, x: fpE, y: fpN, z: fpZ, desc, type: 'ss', setupOcc: occName, ze: parseFloat(zeMatch[1]), hasMeasureUp: (currentHI !== null && currentHR !== null) });
 
                     traverseLines.push({ x1: occ.x, y1: occ.y, x2: fpE, y2: fpN, type: 'ss' });
                 }
@@ -1760,8 +1760,11 @@
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
             if (this.value === '__NEW__') {
                 mergeNewNameInput.style.display = '';
-                // Pre-fill with lastCustomName + 1 if we have one
-                const suggested = incrementName(lastCustomName);
+                // Pre-fill with lastCustomName + 1 if we have one, + N if all obs are 2D
+                let suggested = incrementName(lastCustomName);
+                if (suggested && mergeNameSelect.dataset.allObs2D === '1') {
+                    if (!suggested.match(/N$/i)) suggested = suggested + 'N';
+                }
                 mergeNewNameInput.value = suggested || '';
                 if (suggested) updateRW5NewNameCells(suggested);
                 else updateRW5NewNameCells('');
@@ -1827,6 +1830,32 @@
             return { text: s, cls: v > 0.0001 ? 'delta-pos' : v < -0.0001 ? 'delta-neg' : '' };
         }
 
+        // Check if a description code indicates no elevation (NE suffix)
+        // Handles: CBNE, CBFNE (code ends NE), CBF/NE (old /NE modifier)
+        // Guards against false positives like CORNERSTONE (length > 8)
+        function descEndsNE(desc) {
+            if (!desc) return false;
+            const parts = desc.split('/');
+            // Old style: /NE as a modifier
+            if (parts.slice(1).some(p => p.trim().toUpperCase() === 'NE')) return true;
+            // New style: code ends in NE — survey codes are short (max ~8 chars)
+            const code = parts[0].trim().toUpperCase();
+            if (!code.endsWith('NE')) return false;
+            if (code.length > 8) return false; // guard against words like CORNERSTONE
+            return true;
+        }
+
+        // Determine if a single obsStore entry is a 2D observation:
+        // SP records are always 3D (they have explicit coords)
+        // SS records are 2D if: ZE is exactly 90.0000, OR no measure-up, OR desc ends NE
+        function obsIs2D(o) {
+            if (o.type === 'sp') return false; // SP always has real coords
+            const zeIs90 = o.ze !== undefined && Math.abs(o.ze - 90.0) < 0.0001;
+            const noMeasureUp = o.hasMeasureUp === false;
+            const neDesc = descEndsNE(o.desc);
+            return zeIs90 || noMeasureUp || neDesc;
+        }
+
         // Natural sort: splits string into alpha/numeric chunks and compares each piece
         // so A1 < A2 < A10 < A11, CU1 < CU2 < CU10, A01 < A02 < A10
         function naturalSortKey(s) {
@@ -1854,10 +1883,25 @@
             if (currentModalIndex === -1) currentModalIndex = 0;
             updateNavButtons();
             buildNezSection(clickedPoint);
-            // Gather all obsStore entries within current radius of the clicked averaged position
-            const nearby = obsStore.filter(o => {
+            // Gather all obsStore entries within current radius.
+            // Search from the AVERAGE of all SP observations for the clicked point
+            // (not just the clicked point's single position) so that TS-computed
+            // observations nearby don't fall outside tolerance due to SP/TS offset.
+            // Step 1: find all obsStore entries that share the clicked point's old name
+            //         or whose TS position is very close (2x radius) to the clicked point
+            const broadNearby = obsStore.filter(o => {
                 const dx = o.x - clickedPoint.x;
                 const dy = o.y - clickedPoint.y;
+                return o.oldName === clickedPoint.name ||
+                       Math.sqrt(dx * dx + dy * dy) <= getPopupRadius() * 4;
+            });
+            // Step 2: compute centroid of the broad set
+            const centX = broadNearby.reduce((s, o) => s + o.x, 0) / (broadNearby.length || 1);
+            const centY = broadNearby.reduce((s, o) => s + o.y, 0) / (broadNearby.length || 1);
+            // Step 3: filter from centroid with normal radius
+            const nearby = obsStore.filter(o => {
+                const dx = o.x - centX;
+                const dy = o.y - centY;
                 return Math.sqrt(dx * dx + dy * dy) <= getPopupRadius();
             });
 
@@ -1880,6 +1924,9 @@
             const uniqueNewNames = [...new Set(withNames.map(o => o.newName))];
             modalTitle.textContent = `Point Detail — ${uniqueNewNames.join(', ')}  (${nearby.length} observation${nearby.length !== 1 ? 's' : ''} within ${getPopupRadius()}')`;
 
+            // Determine if ALL nearby observations are 2D
+            const allObs2D = nearby.every(o => obsIs2D(o));
+
             // Build table rows
             modalTableBody.innerHTML = '';
             withNames.forEach((o, i) => {
@@ -1894,10 +1941,16 @@
                 const clickedNewName = entry ? entry[1] : clickedPoint.name;
                 const isForeign = o.newName !== clickedNewName;
 
+                const is2D = obsIs2D(o);
+                const checkOrWarn = is2D
+                    ? `<span title="2D observation — no elevation" style="font-size:15px;cursor:default;">&#9888;</span>`
+                    : `<input type="checkbox" class="obs-check" data-idx="${i}" checked>`;
+
                 const tr = document.createElement('tr');
                 if (isForeign) tr.classList.add('flagged');
+                if (is2D) tr.style.background = '#fffde7';
                 tr.innerHTML = `
-                    <td style="text-align:center"><input type="checkbox" class="obs-check" data-idx="${i}" checked></td>
+                    <td style="text-align:center">${checkOrWarn}</td>
                     <td class="name-cell">${o.oldName}</td>
                     <td class="name-cell rw5-new-name">${o.newName}</td>
                     <td>${fmt(o.y, 4)}</td>
@@ -1927,6 +1980,13 @@
 
             // Populate merge name dropdown:
             // Groups: NEZ matches first (default), then RW5 new names, then -- New --
+            // If all observations are 2D, append N suffix to all suggested names
+            const addNSuffix = name => {
+                if (!allObs2D) return name;
+                // Only add N if not already ending in N
+                return name.match(/N$/i) ? name : name + 'N';
+            };
+
             const uniqueRW5Names = [...new Set(withNames.map(o => o.newName))].sort((a, b) => {
                 const ka = naturalSortKey(a), kb = naturalSortKey(b);
                 return ka < kb ? -1 : ka > kb ? 1 : 0;
@@ -1942,7 +2002,8 @@
             if (nezNames.length > 0) {
                 optionsHtml += `<optgroup label="NEZ">`;
                 nezNames.forEach((n, i) => {
-                    optionsHtml += `<option value="${n}"${i === 0 ? ' selected' : ''}>${n}</option>`;
+                    const val = addNSuffix(n);
+                    optionsHtml += `<option value="${val}"${i === 0 ? ' selected' : ''}>${val}</option>`;
                 });
                 optionsHtml += `</optgroup>`;
             }
@@ -1950,14 +2011,18 @@
             if (uniqueRW5Names.length > 0) {
                 optionsHtml += `<optgroup label="RW5">`;
                 uniqueRW5Names.forEach((n, i) => {
+                    const val = addNSuffix(n);
                     const sel = nezNames.length === 0 && i === 0 ? ' selected' : '';
-                    optionsHtml += `<option value="${n}"${sel}>${n}</option>`;
+                    optionsHtml += `<option value="${val}"${sel}>${val}</option>`;
                 });
                 optionsHtml += `</optgroup>`;
             }
 
             optionsHtml += `<option value="__NEW__">-- New --</option>`;
             mergeNameSelect.innerHTML = optionsHtml;
+
+            // Store allObs2D on select for use in dropdown change handler
+            mergeNameSelect.dataset.allObs2D = allObs2D ? '1' : '0';
 
             // Show/hide inline new name input
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
