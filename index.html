@@ -715,6 +715,24 @@
         </div>
     </div>
 
+    <!-- Toast notification (replaces alert()) -->
+    <div id="toastMsg" style="
+        display:none;
+        position:fixed;
+        bottom:24px;
+        left:50%;
+        transform:translateX(-50%);
+        background:#323232;
+        color:#fff;
+        padding:10px 20px;
+        border-radius:4px;
+        font-size:13px;
+        z-index:9999;
+        box-shadow:0 2px 8px rgba(0,0,0,0.3);
+        max-width:80vw;
+        text-align:center;
+    "></div>
+
     <!-- Renumber Modal -->
     <div id="renumberOverlay">
         <div id="renumberPanel">
@@ -766,6 +784,17 @@
     </div>
 
     <script>
+        // Non-blocking toast notification — replaces alert() for sandboxed iframe
+        let toastTimer = null;
+        function showToast(msg, duration) {
+            duration = duration || 3000;
+            const el = document.getElementById('toastMsg');
+            el.textContent = msg;
+            el.style.display = 'block';
+            if (toastTimer) clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => { el.style.display = 'none'; }, duration);
+        }
+
         const fileInput = document.getElementById('fileInput');
         const dropZone = document.getElementById('dropZone');
         const fileContents = document.getElementById('fileContents');
@@ -814,7 +843,7 @@
             if (file && file.name.toLowerCase().endsWith('.rw5')) {
                 handleFileUpload({ target: { files: [file] } });
             } else {
-                alert("Please drop a valid .rw5 file.");
+                showToast("Please drop a valid .rw5 file.");
             }
         });
 
@@ -835,7 +864,7 @@
 
         document.getElementById('exportNezButton').addEventListener('click', () => {
             if (nezData.length === 0) {
-                alert('No NEZ file loaded.');
+                showToast('No NEZ file loaded.');
                 return;
             }
             const content = buildNezExport();
@@ -882,7 +911,7 @@
         function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file || !file.name.toLowerCase().endsWith('.rw5')) {
-                alert("Please upload a valid .rw5 file.");
+                showToast("Please upload a valid .rw5 file.");
                 return;
             }
 
@@ -953,7 +982,7 @@
             };
 
             reader.onerror = function() {
-                alert("Error reading file.");
+                showToast("Error reading file.", 5000);
             };
 
             reader.readAsText(file);
@@ -1019,7 +1048,7 @@
             const newPointName = newPointNameInput.value.trim();
 
             if (!selectedPoint || !newPointName) {
-                alert("Please select a point and enter a new name.");
+                showToast("Please select a point and enter a new name.");
                 return;
             }
 
@@ -2108,15 +2137,25 @@
             }
 
             const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
-            if (checked.length === 0) return 0;
-
             const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
-            const checkedOldNames = new Set(
-                checked.map(cb => {
-                    const row = rows[parseInt(cb.dataset.idx)];
-                    return row ? row.cells[1].textContent : null; // col 1 = Old Name, never changes
-                }).filter(Boolean)
-            );
+
+            // For all-2D points there are no checkboxes — use all visible rows
+            let checkedOldNames;
+            if (checked.length === 0) {
+                const anyCheckbox = modalTableBody.querySelector('.obs-check');
+                if (anyCheckbox) return 0; // has checkboxes but none checked
+                // All-2D: use all non-avg rows
+                checkedOldNames = new Set(
+                    [...rows].map(row => row.cells[1].textContent).filter(Boolean)
+                );
+            } else {
+                checkedOldNames = new Set(
+                    checked.map(cb => {
+                        const row = rows[parseInt(cb.dataset.idx)];
+                        return row ? row.cells[1].textContent : null;
+                    }).filter(Boolean)
+                );
+            }
 
             let changed = 0;
             pointData.forEach(entry => {
@@ -2125,6 +2164,12 @@
                     changed++;
                 }
             });
+
+            // For all-2D points (no checkboxes), ensure we return at least 1
+            // so Merge & Next advances even if the name was already correct
+            if (changed === 0 && !modalTableBody.querySelector('.obs-check')) {
+                changed = checkedOldNames.size > 0 ? 1 : 0;
+            }
 
             // Track last custom name for +1 incrementing
             if (mergeNameSelect.value === '__NEW__') {
@@ -2233,7 +2278,7 @@
                     redrawPlot();
                 }
             };
-            reader.onerror = () => alert('Error reading NEZ file.');
+            reader.onerror = () => showToast('Error reading NEZ file.', 5000);
             reader.readAsText(file);
         }
 
@@ -2318,15 +2363,34 @@
             const entry = pointData.find(([o]) => o === clickedPoint.name);
             const suggestedNewName = entry ? entry[1] : clickedPoint.name;
 
+            // Find SP elevation for clicked point — used to upgrade 2D NEZ points
+            const spObs = obsStore.filter(o => o.oldName === clickedPoint.name && o.type === 'sp' && o.z !== null);
+            const spElev = spObs.length > 0 ? spObs[0].z : null;
+
             matches.forEach((r, i) => {
+                // Check if this NEZ point is 2D (name ends in N) and we have an SP elevation
+                const nezIs2D = /N$/i.test(r.nez.name);
+                const willUpgradeElev = nezIs2D && spElev !== null;
+
+                // Z cell: show SP elevation highlighted if upgrading, otherwise current NEZ Z
+                const zDisplay = willUpgradeElev
+                    ? `<span style="color:#6a1b9a;font-weight:bold;" title="SP elevation replaces 2D NEZ value">${spElev.toFixed(4)} &#9650;</span>`
+                    : (r.nez.z !== null ? r.nez.z.toFixed(4) : '—');
+
                 const tr = document.createElement('tr');
+                if (willUpgradeElev) tr.style.background = '#f3e5f5';
                 tr.innerHTML = `
-                    <td style="text-align:center"><input type="checkbox" class="nez-check" data-nez-name="${r.nez.name}" data-new-name="${suggestedNewName}" data-old-name="${r.nez.name}" checked></td>
+                    <td style="text-align:center"><input type="checkbox" class="nez-check"
+                        data-nez-name="${r.nez.name}"
+                        data-new-name="${suggestedNewName}"
+                        data-old-name="${r.nez.name}"
+                        data-upgrade-elev="${willUpgradeElev ? spElev : ''}"
+                        checked></td>
                     <td class="name-cell">${r.nez.name}</td>
                     <td class="name-cell nez-new-name">${suggestedNewName}</td>
                     <td>${r.nez.n.toFixed(4)}</td>
                     <td>${r.nez.e.toFixed(4)}</td>
-                    <td>${r.nez.z !== null ? r.nez.z.toFixed(4) : '—'}</td>
+                    <td>${zDisplay}</td>
                     <td>${r.dist.toFixed(3)}</td>
                     <td class="name-cell">${r.nez.desc || '—'}</td>
                 `;
@@ -2349,11 +2413,19 @@
 
         function applyNezRenames(targetNewName) {
             // For all checked NEZ rows, set their newName
+            // Also upgrade elevation for 2D NEZ points (name ends in N) when SP elev is available
             const checks = document.querySelectorAll('.nez-check:checked');
             checks.forEach(cb => {
                 const nezName = cb.dataset.nezName;
                 const nez = nezData.find(n => n.name === nezName);
-                if (nez) nez.newName = targetNewName;
+                if (!nez) return;
+                nez.newName = targetNewName;
+                // Elevation upgrade: if original NEZ name ends in N and SP elev stored on checkbox
+                const upgradeElev = cb.dataset.upgradeElev;
+                if (/N$/i.test(nezName) && upgradeElev && upgradeElev !== '') {
+                    nez.z    = parseFloat(upgradeElev);
+                    nez.errZ = '0.5000';
+                }
             });
         }
 
@@ -2462,7 +2534,7 @@
 
             openBtn.addEventListener('click', function() {
                 if (!pointData || pointData.length === 0) {
-                    alert('Please load an RW5 file first.');
+                    showToast('Please load an RW5 file first.');
                     return;
                 }
                 pfxInput.value = currentPrefix();
