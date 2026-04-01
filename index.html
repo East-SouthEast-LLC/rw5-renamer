@@ -1997,21 +1997,29 @@
         }
 
         // After a merge, refresh traversePoint positions to prefer SP coords over TS-computed.
-        // This ensures the next popup opens centered on the more reliable GPS position.
+        // Also refreshes obsStore x/y to match so popup radius searches work correctly.
         function refreshTraversePointCoords() {
             traversePoints.forEach(tp => {
-                // Find all obsStore entries for this point
-                const obs = obsStore.filter(o => {
-                    const entry = pointData.find(([old]) => old === o.oldName);
-                    return entry ? entry[1] === (pointData.find(([o2]) => o2 === tp.name) || [,tp.name])[1]
-                                 : o.oldName === tp.name;
-                });
+                // Find SP observation for this point by old name (obsStore always uses old names)
                 const spObs = obsStore.filter(o => o.oldName === tp.name && o.type === 'sp');
-                if (spObs.length > 0) {
-                    tp.x = spObs[0].x;
-                    tp.y = spObs[0].y;
-                    if (spObs[0].z !== null) tp.z = spObs[0].z;
-                }
+                if (spObs.length === 0) return;
+
+                const spX = spObs[0].x, spY = spObs[0].y, spZ = spObs[0].z;
+
+                // Snap traversePoint to GPS position
+                tp.x = spX;
+                tp.y = spY;
+                if (spZ !== null) tp.z = spZ;
+
+                // Also snap ALL obsStore entries for this point to the GPS position
+                // so the popup radius search (which searches obsStore) finds them correctly
+                obsStore.forEach(o => {
+                    if (o.oldName === tp.name) {
+                        o.x = spX;
+                        o.y = spY;
+                        if (spZ !== null) o.z = spZ;
+                    }
+                });
             });
         }
 
