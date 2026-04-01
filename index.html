@@ -1386,22 +1386,33 @@
             });
 
             // --- Collapse obsStore into one averaged marker per original point name ---
-            const accumulator = {}; // oldName -> { xs, ys, zs, desc, type }
+            // SP/GPS observations are tracked separately — if present they win over TS-computed coords
+            const accumulator = {}; // oldName -> { xs, ys, zs, desc, type, spX, spY, spZ }
             obsStore.forEach(({ oldName, x, y, z, desc, type }) => {
                 if (!accumulator[oldName]) {
-                    accumulator[oldName] = { xs: [], ys: [], zs: [], desc, type };
+                    accumulator[oldName] = { xs: [], ys: [], zs: [], desc, type,
+                                             spX: null, spY: null, spZ: null };
                 }
                 accumulator[oldName].xs.push(x);
                 accumulator[oldName].ys.push(y);
                 if (z !== null) accumulator[oldName].zs.push(z);
                 if (!accumulator[oldName].desc && desc) accumulator[oldName].desc = desc;
+                // Store SP/GPS coords separately so they can take priority
+                if (type === 'sp') {
+                    accumulator[oldName].spX = x;
+                    accumulator[oldName].spY = y;
+                    if (z !== null) accumulator[oldName].spZ = z;
+                }
             });
 
-            const points = Object.entries(accumulator).map(([name, { xs, ys, zs, desc, type }]) => {
-                const avgX = xs.reduce((a, b) => a + b, 0) / xs.length;
-                const avgY = ys.reduce((a, b) => a + b, 0) / ys.length;
-                const avgZ = zs.length > 0 ? zs.reduce((a, b) => a + b, 0) / zs.length : null;
-                return { name, x: avgX, y: avgY, z: avgZ, desc, type, obsCount: xs.length };
+            const points = Object.entries(accumulator).map(([name, { xs, ys, zs, desc, type, spX, spY, spZ }]) => {
+                // Prefer SP/GPS coords when available, fall back to average of all observations
+                const useX  = spX !== null ? spX : xs.reduce((a, b) => a + b, 0) / xs.length;
+                const useY  = spY !== null ? spY : ys.reduce((a, b) => a + b, 0) / ys.length;
+                const avgZ  = zs.length > 0 ? zs.reduce((a, b) => a + b, 0) / zs.length : null;
+                const useZ  = spZ !== null ? spZ : avgZ;
+                return { name, x: useX, y: useY, z: useZ, desc, type, obsCount: xs.length,
+                         hasSpCoord: spX !== null };
             });
 
             // neighborFlag computed by recomputeNeighborFlags() after parse
@@ -1985,6 +1996,25 @@
             return prefix + nextNum + suffix;
         }
 
+        // After a merge, refresh traversePoint positions to prefer SP coords over TS-computed.
+        // This ensures the next popup opens centered on the more reliable GPS position.
+        function refreshTraversePointCoords() {
+            traversePoints.forEach(tp => {
+                // Find all obsStore entries for this point
+                const obs = obsStore.filter(o => {
+                    const entry = pointData.find(([old]) => old === o.oldName);
+                    return entry ? entry[1] === (pointData.find(([o2]) => o2 === tp.name) || [,tp.name])[1]
+                                 : o.oldName === tp.name;
+                });
+                const spObs = obsStore.filter(o => o.oldName === tp.name && o.type === 'sp');
+                if (spObs.length > 0) {
+                    tp.x = spObs[0].x;
+                    tp.y = spObs[0].y;
+                    if (spObs[0].z !== null) tp.z = spObs[0].z;
+                }
+            });
+        }
+
         // Resolve the current merge target name — from dropdown or inline text input
         function getMergeTarget() {
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
@@ -2033,6 +2063,7 @@
 
             updateFileContent();
             updateGrid();
+            refreshTraversePointCoords(); // update map positions to prefer SP/GPS coords
             recomputeNeighborFlags();
             redrawPlot();
             return changed;
