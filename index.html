@@ -1299,13 +1299,33 @@
                 });
             }
 
-            // --- Pass 2: walk records in order for OC/LS/BK/SS ---
+            // --- Pass 2: walk records in order for OC/LS/BK/SS/FD/FR ---
             let occName    = null;
             let bsName     = null;
             let bsAzimuth  = null; // fallback when bsName has no coords — from BK,BS field
             let currentHI  = null;
             let currentHR  = null;
             traverseLines  = [];
+
+            // FD/FR doubled-angle support:
+            // Each set follows the pattern BD / FD / FR / BR (direct then reverse).
+            // FD is the direct foresight; FR is the reverse foresight.
+            // We buffer the FD record and resolve it when the matching FR arrives.
+            //
+            // Averaging:
+            //   Horizontal angle: (AR_direct + (AR_reverse - 180°)) / 2
+            //   Zenith angle:     (ZE_direct + (360° - ZE_reverse)) / 2
+            //   Slope distance:   (SD_direct + SD_reverse) / 2
+            //
+            // The BD/BR backsight pair carries the set's orientation error (BR should read
+            // exactly 180°00'00"; the deviation is the closing error of the set). This
+            // implementation takes the BK azimuth at face value and does not apply a
+            // BD/BR-derived orientation correction.
+            // NOTE FOR ADJUSTMENT SOFTWARE: A rigorous implementation should use the BD/BR
+            // pair to compute and distribute the orientation misclosure across the set's
+            // foresight angles. The simple mean used here is appropriate for plotting and
+            // point identification but not for a least squares adjustment.
+            const fdBuffer = {}; // fpName -> { ar, ze, sd, hi, hr, desc, occName, azBS }
 
             lines.forEach(line => {
                 line = line.trim();
@@ -1344,7 +1364,6 @@
                         const bkOcc = parts[1].substring(2).trim();
                         if (!occName) {
                             occName = bkOcc;
-                            // Pull inline coords from coordMap if available (set via SP)
                             bsAzimuth = null;
                         }
                     }
@@ -1371,9 +1390,9 @@
                     if (bs) {
                         azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
                     } else if (bsAzimuth !== null) {
-                        azBS = bsAzimuth; // use recorded azimuth directly
+                        azBS = bsAzimuth;
                     } else {
-                        return; // no way to resolve orientation
+                        return;
                     }
 
                     const fpMatch   = line.match(/,FP([A-Za-z0-9]+),/);
@@ -1390,25 +1409,111 @@
                     const ze = dmsToRad(parseFloat(zeMatch[1]));
                     const desc = descMatch ? descMatch[1].trim() : '';
 
-                    // Horizontal position
                     const hd   = sd * Math.sin(ze);
                     const azFP = azBS + ar;
                     const fpN  = occ.y + hd * Math.cos(azFP);
                     const fpE  = occ.x + hd * Math.sin(azFP);
                     if (isNaN(fpN) || isNaN(fpE)) return;
 
-                    // Elevation: Elev(FP) = Elev(OCC) + HI + SD*cos(ZE) - HR
                     let fpZ = null;
                     const occElev = elevMap[occName];
                     if (occElev !== undefined && currentHI !== null && currentHR !== null) {
                         fpZ = occElev + currentHI + sd * Math.cos(ze) - currentHR;
                     }
 
-                    // Carry forward into maps so chained setups work
                     coordMap[fpName] = { x: fpE, y: fpN };
                     if (fpZ !== null) elevMap[fpName] = fpZ;
 
                     obsStore.push({ oldName: fpName, x: fpE, y: fpN, z: fpZ, desc, type: 'ss', setupOcc: occName, ze: parseFloat(zeMatch[1]), hasMeasureUp: (currentHI !== null && currentHR !== null) });
+
+                    traverseLines.push({ x1: occ.x, y1: occ.y, x2: fpE, y2: fpN, type: 'ss' });
+                }
+
+                // FD — direct foresight of a doubled-angle set; buffer until FR arrives
+                if (line.startsWith('FD,')) {
+                    if (!occName) return;
+                    const occ = coordMap[occName];
+                    if (!occ) return;
+
+                    const bs = bsName ? coordMap[bsName] : null;
+                    let azBS = null;
+                    if (bs) {
+                        azBS = Math.atan2(bs.x - occ.x, bs.y - occ.y);
+                    } else if (bsAzimuth !== null) {
+                        azBS = bsAzimuth;
+                    } else {
+                        return;
+                    }
+
+                    const fpMatch   = line.match(/,FP([A-Za-z0-9]+),/);
+                    const arMatch   = line.match(/,AR([\d.]+)/);
+                    const sdMatch   = line.match(/,SD([\d.]+)/);
+                    const zeMatch   = line.match(/,ZE([\d.]+)/);
+                    const descMatch = line.match(/,--([^,\r\n]+)/);
+
+                    if (!fpMatch || !arMatch || !sdMatch || !zeMatch) return;
+
+                    const fpName = fpMatch[1].trim();
+                    fdBuffer[fpName] = {
+                        ar:      parseFloat(arMatch[1]),
+                        ze:      parseFloat(zeMatch[1]),
+                        sd:      parseFloat(sdMatch[1]),
+                        hi:      currentHI,
+                        hr:      currentHR,
+                        desc:    descMatch ? descMatch[1].trim() : '',
+                        occName: occName,
+                        azBS:    azBS,
+                    };
+                }
+
+                // FR — reverse foresight; resolve with buffered FD and emit averaged observation
+                if (line.startsWith('FR,')) {
+                    const fpMatch = line.match(/,FP([A-Za-z0-9]+),/);
+                    if (!fpMatch) return;
+                    const fpName = fpMatch[1].trim();
+
+                    const fd = fdBuffer[fpName];
+                    if (!fd) return; // no matching FD — skip
+                    delete fdBuffer[fpName];
+
+                    const arRevMatch = line.match(/,AR([\d.]+)/);
+                    const sdRevMatch = line.match(/,SD([\d.]+)/);
+                    const zeRevMatch = line.match(/,ZE([\d.]+)/);
+                    if (!arRevMatch || !sdRevMatch || !zeRevMatch) return;
+
+                    const arRev = parseFloat(arRevMatch[1]); // ~(AR_direct + 180°)
+                    const sdRev = parseFloat(sdRevMatch[1]);
+                    const zeRev = parseFloat(zeRevMatch[1]); // ~(360° - ZE_direct)
+
+                    // Average horizontal angle: (direct + (reverse - 180°)) / 2
+                    // Average zenith:           (direct + (360° - reverse)) / 2
+                    // Average slope distance:   (direct + reverse) / 2
+                    const arMeanDms = (fd.ar + (arRev - 180.0)) / 2.0;
+                    const zeMeanDms = (fd.ze + (360.0 - zeRev)) / 2.0;
+                    const sdMean    = (fd.sd + sdRev) / 2.0;
+
+                    const occ = coordMap[fd.occName];
+                    if (!occ) return;
+
+                    const ar = dmsToRad(arMeanDms);
+                    const ze = dmsToRad(zeMeanDms);
+                    const hd   = sdMean * Math.sin(ze);
+                    const azFP = fd.azBS + ar;
+                    const fpN  = occ.y + hd * Math.cos(azFP);
+                    const fpE  = occ.x + hd * Math.sin(azFP);
+                    if (isNaN(fpN) || isNaN(fpE)) return;
+
+                    // Use HI/HR from the FD record (direct face; rod height is the same both faces)
+                    let fpZ = null;
+                    const occElev = elevMap[fd.occName];
+                    if (occElev !== undefined && fd.hi !== null && fd.hr !== null) {
+                        fpZ = occElev + fd.hi + sdMean * Math.cos(ze) - fd.hr;
+                    }
+
+                    coordMap[fpName] = { x: fpE, y: fpN };
+                    if (fpZ !== null) elevMap[fpName] = fpZ;
+
+                    obsStore.push({ oldName: fpName, x: fpE, y: fpN, z: fpZ, desc: fd.desc, type: 'ss', setupOcc: fd.occName, ze: zeMeanDms, hasMeasureUp: (fd.hi !== null && fd.hr !== null) });
 
                     traverseLines.push({ x1: occ.x, y1: occ.y, x2: fpE, y2: fpN, type: 'ss' });
                 }
