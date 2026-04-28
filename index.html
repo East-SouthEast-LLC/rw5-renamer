@@ -2347,34 +2347,37 @@
         }
 
         function parseNez(content) {
+            // Normalises on load — handles all three legacy variants:
+            //   PNEZsssD  (8 cols): Name,N,E,Z,sN,sE,sZ,Desc          ← already clean
+            //   PNEZsssDC (9 cols): Name,N,E,Z,sN,sE,sZ,Desc,Code     ← blank Code trails desc
+            //   PNEZsssCD (9 cols): Name,N,E,Z,sN,sE,sZ,Code,Desc     ← old C&G/Carlson layout
+            // All variants are reduced to PNEZsssD fields internally.
             nezData = [];
             const lines = content.split(/\r?\n/);
             lines.forEach(line => {
                 line = line.trim();
                 if (!line) return;
-                const parts = line.split(',');
+                const parts = line.split(',').map(p => p.trim());
                 if (parts.length < 4) return;
-                const name  = parts[0].trim();
-                const n     = parseFloat(parts[1]);
-                const e     = parseFloat(parts[2]);
-                const z     = parseFloat(parts[3]);
+                const name = parts[0];
+                const n    = parseFloat(parts[1]);
+                const e    = parseFloat(parts[2]);
+                const z    = parseFloat(parts[3]);
                 if (!name || isNaN(n) || isNaN(e)) return;
-                // Support both formats:
-                //   PNEZssssD (9 cols): Name,N,E,Z,errN,errE,errZ,errAz,Desc
-                //   PNEZsssD  (8 cols): Name,N,E,Z,errN,errE,errZ,Desc   ← converted format
-                const hasFourErrors = parts.length >= 9;
+                const errN = parts[4] || '';
+                const errE = parts[5] || '';
+                const errZ = parts[6] || '';
+                // col7 / col8: one is desc, the other is the blank Code (if 9-col file).
+                // Pick whichever is non-empty; if 8-col, col7 is simply the description.
+                const col7 = parts[7] || '';
+                const col8 = parts[8] || '';
+                const desc = (parts.length >= 9) ? (col7 || col8) : col7;
                 nezData.push({
-                    name,
-                    n, e,
+                    name, n, e,
                     z: isNaN(z) ? null : z,
-                    errN:  parts[4] ? parts[4].trim() : '',
-                    errE:  parts[5] ? parts[5].trim() : '',
-                    errZ:  parts[6] ? parts[6].trim() : '',
-                    errAz: hasFourErrors ? (parts[7] ? parts[7].trim() : '') : null,
-                    desc:  hasFourErrors
-                               ? (parts[8] ? parts[8].trim() : '')
-                               : (parts[7] ? parts[7].trim() : ''),
-                    newName: null   // filled in when matched
+                    errN, errE, errZ,
+                    desc,
+                    newName: null
                 });
             });
         }
