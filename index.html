@@ -2306,7 +2306,8 @@
 
         // ── NEZ File Handling ──
 
-        let nezData = [];       // array of { name, n, e, z, errN, errE, errZ, errAz, desc, newName }
+        let nezData = [];       // array of { name, n, e, z, errN, errE, errZ, errAz|null, desc, newName }
+                               // errAz is null for converted PNEZsssD (8-col) format; string for legacy PNEZssssD (9-col)
         let nezFileName = '';
         // NEZ_RADIUS is now dynamic — reads from modalRadiusInput via getPopupRadius()
 
@@ -2358,6 +2359,10 @@
                 const e     = parseFloat(parts[2]);
                 const z     = parseFloat(parts[3]);
                 if (!name || isNaN(n) || isNaN(e)) return;
+                // Support both formats:
+                //   PNEZssssD (9 cols): Name,N,E,Z,errN,errE,errZ,errAz,Desc
+                //   PNEZsssD  (8 cols): Name,N,E,Z,errN,errE,errZ,Desc   ← converted format
+                const hasFourErrors = parts.length >= 9;
                 nezData.push({
                     name,
                     n, e,
@@ -2365,8 +2370,10 @@
                     errN:  parts[4] ? parts[4].trim() : '',
                     errE:  parts[5] ? parts[5].trim() : '',
                     errZ:  parts[6] ? parts[6].trim() : '',
-                    errAz: parts[7] ? parts[7].trim() : '',
-                    desc:  parts[8] ? parts[8].trim() : '',
+                    errAz: hasFourErrors ? (parts[7] ? parts[7].trim() : '') : null,
+                    desc:  hasFourErrors
+                               ? (parts[8] ? parts[8].trim() : '')
+                               : (parts[7] ? parts[7].trim() : ''),
                     newName: null   // filled in when matched
                 });
             });
@@ -2496,14 +2503,15 @@
             // Rebuild NEZ with renames applied, leave unmatched points as-is
             return nezData.map(nez => {
                 const name = nez.newName || nez.name;
-                const fields = [
-                    name,
-                    nez.n.toFixed(4),
-                    nez.e.toFixed(4),
-                    nez.z !== null ? nez.z.toFixed(4) : '',
-                    nez.errN, nez.errE, nez.errZ, nez.errAz,
-                    nez.desc
-                ];
+                const fields = nez.errAz !== null
+                    // Original 9-col format: PNEZssssD
+                    ? [name, nez.n.toFixed(4), nez.e.toFixed(4),
+                       nez.z !== null ? nez.z.toFixed(4) : '',
+                       nez.errN, nez.errE, nez.errZ, nez.errAz, nez.desc]
+                    // Converted 8-col format: PNEZsssD
+                    : [name, nez.n.toFixed(4), nez.e.toFixed(4),
+                       nez.z !== null ? nez.z.toFixed(4) : '',
+                       nez.errN, nez.errE, nez.errZ, nez.desc];
                 return fields.join(',');
             }).join('\r\n');
         }
