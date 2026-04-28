@@ -2501,17 +2501,12 @@
 
         function buildNezExport() {
             // Rebuild NEZ with renames applied, leave unmatched points as-is
+            // Always output PNEZsssD (8-col) format — Code/errAz column is dropped
             return nezData.map(nez => {
                 const name = nez.newName || nez.name;
-                const fields = nez.errAz !== null
-                    // Original 9-col format: PNEZssssD
-                    ? [name, nez.n.toFixed(4), nez.e.toFixed(4),
-                       nez.z !== null ? nez.z.toFixed(4) : '',
-                       nez.errN, nez.errE, nez.errZ, nez.errAz, nez.desc]
-                    // Converted 8-col format: PNEZsssD
-                    : [name, nez.n.toFixed(4), nez.e.toFixed(4),
-                       nez.z !== null ? nez.z.toFixed(4) : '',
-                       nez.errN, nez.errE, nez.errZ, nez.desc];
+                const fields = [name, nez.n.toFixed(4), nez.e.toFixed(4),
+                    nez.z !== null ? nez.z.toFixed(4) : '',
+                    nez.errN, nez.errE, nez.errZ, nez.desc];
                 return fields.join(',');
             }).join('\r\n');
         }
