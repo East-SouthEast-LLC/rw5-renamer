@@ -1853,7 +1853,7 @@
             if (this.value === '__NEW__') {
                 mergeNewNameInput.style.display = '';
                 // Pre-fill with lastCustomName + 1 if we have one, + N if all obs are 2D
-                let suggested = incrementName(lastCustomName);
+                let suggested = incrementName(lastCustomName || inferLastName());
                 if (suggested && mergeNameSelect.dataset.allObs2D === '1') {
                     if (!suggested.match(/N$/i)) suggested = suggested + 'N';
                 }
@@ -1971,8 +1971,16 @@
                 const ob = naturalSortKey(b.name);
                 return oa < ob ? -1 : oa > ob ? 1 : 0;
             });
-            currentModalIndex = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
-            if (currentModalIndex === -1) currentModalIndex = 0;
+            const foundIdx = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
+            if (foundIdx !== -1) {
+                currentModalIndex = foundIdx;
+            } else {
+                // Point was merged away — stay near where we were, clamped to valid range
+                currentModalIndex = Math.min(
+                    Math.max(0, currentModalIndex),
+                    modalSortedPoints.length - 1
+                );
+            }
             updateNavButtons();
             buildNezSection(clickedPoint);
             // Gather all obsStore entries within current radius.
@@ -2125,7 +2133,7 @@
             // (deferred so the table rows are built first)
             setTimeout(() => {
                 if (mergeNameSelect.value === '__NEW__') {
-                    const suggested = incrementName(lastCustomName) || '';
+                    const suggested = incrementName(lastCustomName || inferLastName()) || '';
                     document.getElementById('mergeNewNameInput').value = suggested;
                     document.getElementById('mergeNewNameInput').style.display = '';
                     if (suggested) updateRW5NewNameCells(suggested);
@@ -2151,6 +2159,22 @@
             const suffix = m[3];
             const nextNum = String(num + 1).padStart(width, '0');
             return prefix + nextNum + suffix;
+        }
+
+        // Find the highest-numbered new name in pointData that matches a given prefix,
+        // and return that name (so incrementName can add 1 to it).
+        // Used to seed the -- New -- suggestion when lastCustomName is null.
+        function inferLastName() {
+            if (!pointData || pointData.length === 0) return null;
+            // Collect all current new names that have a trailing number
+            let best = null, bestNum = -1;
+            pointData.forEach(([, newName]) => {
+                const m = newName && newName.match(/^(.*?)(\d+)([A-Za-z]*)$/);
+                if (!m) return;
+                const n = parseInt(m[2], 10);
+                if (n > bestNum) { bestNum = n; best = newName; }
+            });
+            return best;
         }
 
         // After a merge, refresh traversePoint positions to prefer SP coords over TS-computed.
@@ -2601,20 +2625,40 @@
                 }).join('\n');
             }
 
+            // Find the highest existing number in pointData whose new name starts with prefix
+            function nextAvailableStart(prefix) {
+                if (!prefix || !pointData || pointData.length === 0) return 1;
+                var pfxUpper = prefix.toUpperCase();
+                var max = 0;
+                pointData.forEach(function(entry) {
+                    var name = (entry[1] || '').toUpperCase();
+                    if (name.startsWith(pfxUpper)) {
+                        var rest = name.slice(pfxUpper.length).replace(/N$/i, '');
+                        var n = parseInt(rest, 10);
+                        if (!isNaN(n) && n > max) max = n;
+                    }
+                });
+                return max + 1;
+            }
+
             openBtn.addEventListener('click', function() {
                 if (!pointData || pointData.length === 0) {
                     showToast('Please load an RW5 file first.');
                     return;
                 }
-                pfxInput.value = currentPrefix();
-                startNum.value = 1;
+                var pfx = currentPrefix();
+                pfxInput.value = pfx;
+                startNum.value = nextAvailableStart(pfx);
                 suffixN.checked = false;
                 statusEl.textContent = '';
                 updateDecoded();
                 overlay.classList.add('active');
             });
 
-            pfxInput.addEventListener('input', updateDecoded);
+            pfxInput.addEventListener('input', function() {
+                startNum.value = nextAvailableStart(pfxInput.value.trim());
+                updateDecoded();
+            });
             startNum.addEventListener('input', updatePreview);
             suffixN.addEventListener('change', updatePreview);
 
