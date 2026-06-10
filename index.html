@@ -160,6 +160,8 @@
         #navOrderBtn:hover { background-color: #455A64; }
         #navOrderBtn.numerical { background-color: #FF9800; }
         #navOrderBtn.numerical:hover { background-color: #F57C00; }
+        #navOrderBtn.goto { background-color: #1565C0; }
+        #navOrderBtn.goto:hover { background-color: #0D47A1; }
 
 
 
@@ -1056,12 +1058,18 @@
             // Order depends on navOrder mode
             let ordered;
             if (navOrder === 'traverse' && traverseOrder.length > 0) {
-                // Traverse: follow traverseOrder, append any not in it
                 const inOrder = traverseOrder.filter(n => points.includes(n));
                 const remainder = points.filter(n => !inOrder.includes(n))
                     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
                 ordered = [...inOrder, ...remainder];
+            } else if (navOrder === 'goto') {
+                // Sort by current new (proposed) name
+                ordered = [...points].sort((a, b) => {
+                    const na = getNewName(a), nb = getNewName(b);
+                    return na.localeCompare(nb, undefined, { numeric: true });
+                });
             } else {
+                // Numerical: sort by old name
                 ordered = [...points].sort((a, b) =>
                     a.localeCompare(b, undefined, { numeric: true })
                 );
@@ -1235,25 +1243,26 @@
                 ordered.push(name);
             }
 
-            lines.forEach(line => {
-                line = line.trim();
+            lines.forEach(rawLine => {
+                // Strip leading non-printable/non-ASCII bytes (encoding artifacts)
+                const line = rawLine.replace(/^[^A-Za-z]+/, '').trim();
 
-                if (line.startsWith('OC,')) {
+                if (/^OC,/.test(line)) {
                     const m = line.match(/,OP([A-Za-z0-9]+)/);
                     if (m) addName(m[1]);
                     return;
                 }
-                if (line.startsWith('BK,') || line.startsWith('BD,')) {
+                if (/^B[KD],/.test(line)) {
                     const m = line.match(/,BP([A-Za-z0-9]+)/);
                     if (m) addName(m[1]);
                     return;
                 }
-                if (line.startsWith('SS,') || line.startsWith('FD,')) {
+                if (/^(SS|FD),/.test(line)) {
                     const m = line.match(/,FP([A-Za-z0-9]+),/);
                     if (m) addName(m[1]);
                     return;
                 }
-                if (line.startsWith('SP,') || line.startsWith('GPS,') || line.startsWith('GS,')) {
+                if (/^(SP|GPS|GS),/.test(line)) {
                     const m = line.match(/,PN([A-Za-z0-9]+)/);
                     if (!m) return;
                     const name = m[1];
@@ -1932,9 +1941,18 @@
                 showToast('Load an RW5 file first.');
                 return;
             }
-            navOrder = navOrder === 'traverse' ? 'numerical' : 'traverse';
-            navOrderBtn.textContent = navOrder === 'traverse' ? 'TRAVERSE' : 'NUMERICAL';
-            navOrderBtn.classList.toggle('numerical', navOrder === 'numerical');
+            // Cycle: traverse → numerical → goto → traverse
+            if (navOrder === 'traverse')       navOrder = 'numerical';
+            else if (navOrder === 'numerical') navOrder = 'goto';
+            else                               navOrder = 'traverse';
+
+            navOrderBtn.textContent = navOrder === 'traverse' ? 'TRAVERSE'
+                                    : navOrder === 'numerical' ? 'NUMERICAL'
+                                    : 'GOTO';
+            navOrderBtn.classList.remove('numerical', 'goto');
+            if (navOrder === 'numerical') navOrderBtn.classList.add('numerical');
+            if (navOrder === 'goto')      navOrderBtn.classList.add('goto');
+
             // Repopulate dropdown in new order
             const allOldNames = pointData.map(([old]) => old);
             populatePointDropdown(allOldNames);
@@ -2095,9 +2113,15 @@
                 traverseOrder.forEach(oldName => {
                     if (tpByOldName[oldName]) modalSortedPoints.push(tpByOldName[oldName]);
                 });
-                // Safety net: append any traversePoints not in traverseOrder
                 traversePoints.forEach(p => {
                     if (!modalSortedPoints.includes(p)) modalSortedPoints.push(p);
+                });
+            } else if (navOrder === 'goto') {
+                // Sort by current new (proposed) name
+                modalSortedPoints = [...traversePoints].sort((a, b) => {
+                    const na = naturalSortKey(getNewName(a.name));
+                    const nb = naturalSortKey(getNewName(b.name));
+                    return na < nb ? -1 : na > nb ? 1 : 0;
                 });
             } else {
                 // Numerical: sort by current new name using natural sort
