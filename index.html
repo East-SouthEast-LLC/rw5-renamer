@@ -1055,9 +1055,8 @@
             const pointIndex = pointData.findIndex((point) => point[0] === selectedPoint);
             if (pointIndex !== -1) {
                 pointData[pointIndex][1] = newPointName;
-                updateFileContent();
                 updateGrid();
-                if (traversePoints.length > 0) { recomputeNeighborFlags(); redrawPlot(); }
+                reprocessAndRedraw();
 
                 currentIndex = (pointIndex + 1) % sortedPoints.length;
                 pointSelector.value = sortedPoints[currentIndex];
@@ -2204,6 +2203,25 @@
             });
         }
 
+        // Re-run the full parse/trig chain on current renamed content, preserving pan/zoom.
+        // Call this after any merge or rename so map coordinates reflect updated point names.
+        function reprocessAndRedraw() {
+            fileContent = buildRenamedContent();
+            refreshViewport();
+            const savedViewInit = plotCanvas._viewInit;
+            const savedZoom  = plotCanvas._zoom;
+            const savedPanX  = plotCanvas._panX;
+            const savedPanY  = plotCanvas._panY;
+            traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
+            recomputeNeighborFlags();
+            // Restore pan/zoom so the view doesn't jump
+            plotCanvas._viewInit = savedViewInit;
+            plotCanvas._zoom  = savedZoom;
+            plotCanvas._panX  = savedPanX;
+            plotCanvas._panY  = savedPanY;
+            redrawPlot();
+        }
+
         // Resolve the current merge target name — from dropdown or inline text input
         function getMergeTarget() {
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
@@ -2266,11 +2284,8 @@
             // Apply NEZ renames for checked NEZ rows
             applyNezRenames(targetName);
 
-            updateFileContent();
             updateGrid();
-            refreshTraversePointCoords(); // update map positions to prefer SP/GPS coords
-            recomputeNeighborFlags();
-            redrawPlot();
+            reprocessAndRedraw(); // full re-parse so map coords reflect merged names
             return changed;
         }
 
@@ -2677,9 +2692,8 @@
                     var entry = pointData.find(function(e) { return e[0] === r.oldName; });
                     if (entry) entry[1] = r.newName;
                 });
-                updateFileContent();
                 updateGrid();
-                if (traversePoints && traversePoints.length > 0) { recomputeNeighborFlags(); redrawPlot(); }
+                if (traversePoints && traversePoints.length > 0) { reprocessAndRedraw(); }
                 statusEl.textContent = 'Renumbered ' + map.length + ' point' + (map.length !== 1 ? 's' : '') + '.';
                 statusEl.style.color = '#2a7a2a';
                 updatePreview();
