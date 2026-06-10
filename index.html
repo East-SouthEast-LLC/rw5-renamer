@@ -142,11 +142,11 @@
             align-items: stretch;
         }
         #selectorRow select {
-            flex: 1 1 auto;
+            flex: 1 1 50%;
             min-width: 0;
         }
         #navOrderBtn {
-            flex: 0 0 auto;
+            flex: 1 1 50%;
             padding: 5px 8px;
             font-size: 12px;
             font-weight: bold;
@@ -1257,8 +1257,9 @@
                     const m = line.match(/,PN([A-Za-z0-9]+)/);
                     if (!m) return;
                     const name = m[1];
-                    addName(name); // adds if first time seen in traverse flow
-                    if (!spNames.includes(name)) spNames.push(name); // track for tail check
+                    // Do NOT add to ordered here — SP records go to tail unless
+                    // already seen via a traverse record (OC/BK/SS).
+                    if (!spNames.includes(name)) spNames.push(name);
                     return;
                 }
             });
