@@ -136,11 +136,32 @@
             background-color: #F57C00 !important;
         }
 
-        #grid {
-            border-collapse: collapse;
-            width: 100%;
-            font-size: 12px;
+        #selectorRow {
+            display: flex;
+            gap: 5px;
+            align-items: stretch;
         }
+        #selectorRow select {
+            flex: 1 1 auto;
+            min-width: 0;
+        }
+        #navOrderBtn {
+            flex: 0 0 auto;
+            padding: 5px 8px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            background-color: #607D8B;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            white-space: nowrap;
+        }
+        #navOrderBtn:hover { background-color: #455A64; }
+        #navOrderBtn.numerical { background-color: #FF9800; }
+        #navOrderBtn.numerical:hover { background-color: #F57C00; }
+
+
 
         #grid th, #grid td {
             border: 1px solid #ddd;
@@ -607,9 +628,12 @@
         <!-- LEFT PANEL -->
         <div id="leftPanel">
             <div id="textControls">
-                <select id="pointSelector">
-                    <option value="">Select a Point</option>
-                </select>
+                <div id="selectorRow">
+                    <select id="pointSelector">
+                        <option value="">Select a Point</option>
+                    </select>
+                    <button id="navOrderBtn" title="Toggle navigation order">TRAVERSE</button>
+                </div>
                 <input type="text" id="newPointName" placeholder="Enter new point name">
                 <button id="renameButton">Rename Point</button>
                 <button id="zoomToPointButton">Zoom to Point</button>
@@ -1878,6 +1902,16 @@
         const modalNavLabel  = document.getElementById('modalNavLabel');
         const modalStatus    = document.getElementById('modalStatus');
 
+        // Navigation order mode: 'traverse' (field order) or 'numerical' (sorted by name)
+        let navOrder = 'traverse';
+
+        const navOrderBtn = document.getElementById('navOrderBtn');
+        navOrderBtn.addEventListener('click', () => {
+            navOrder = navOrder === 'traverse' ? 'numerical' : 'traverse';
+            navOrderBtn.textContent = navOrder === 'traverse' ? 'TRAVERSE' : 'NUMERICAL';
+            navOrderBtn.classList.toggle('numerical', navOrder === 'numerical');
+        });
+
         // Sorted list of traversePoint indices for Prev/Next navigation
         // Rebuilt whenever the modal opens so it always reflects current sort order
         let modalSortedPoints = [];
@@ -2020,20 +2054,31 @@
         }
 
         function openModal(clickedPoint) {
-            // Build navigation list in first-appearance traverse order.
-            // traverseOrder contains old names in field order; map each to its traversePoint.
-            // Points not in traverseOrder (shouldn't happen) fall to the end.
+            // Build navigation list in the current navOrder mode.
             const tpByOldName = {};
             traversePoints.forEach(p => { tpByOldName[p.name] = p; });
 
-            modalSortedPoints = [];
-            traverseOrder.forEach(oldName => {
-                if (tpByOldName[oldName]) modalSortedPoints.push(tpByOldName[oldName]);
-            });
-            // Append any traversePoints not captured in traverseOrder (safety net)
-            traversePoints.forEach(p => {
-                if (!modalSortedPoints.includes(p)) modalSortedPoints.push(p);
-            });
+            if (navOrder === 'traverse') {
+                modalSortedPoints = [];
+                traverseOrder.forEach(oldName => {
+                    if (tpByOldName[oldName]) modalSortedPoints.push(tpByOldName[oldName]);
+                });
+                // Safety net: append any traversePoints not in traverseOrder
+                traversePoints.forEach(p => {
+                    if (!modalSortedPoints.includes(p)) modalSortedPoints.push(p);
+                });
+            } else {
+                // Numerical: sort by current new name using natural sort
+                modalSortedPoints = [...traversePoints].sort((a, b) => {
+                    const na = naturalSortKey(getNewName(a.name));
+                    const nb = naturalSortKey(getNewName(b.name));
+                    if (na < nb) return -1;
+                    if (na > nb) return  1;
+                    const oa = naturalSortKey(a.name);
+                    const ob = naturalSortKey(b.name);
+                    return oa < ob ? -1 : oa > ob ? 1 : 0;
+                });
+            }
             const foundIdx = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
             if (foundIdx !== -1) {
                 currentModalIndex = foundIdx;
