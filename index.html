@@ -1018,7 +1018,7 @@
                 showToast("Error reading file.", 5000);
             };
 
-            reader.readAsText(file);
+            reader.readAsText(file, "iso-8859-1");
         }
 
         // --- Point Extraction ---
@@ -2548,7 +2548,7 @@
                 }
             };
             reader.onerror = () => showToast('Error reading NEZ file.', 5000);
-            reader.readAsText(file);
+            reader.readAsText(file, "iso-8859-1");
         }
 
         function parseNez(content) {
