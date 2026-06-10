@@ -930,6 +930,7 @@
                 updateGrid();
 
                 traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
+                traverseOrder = buildTraverseOrder(fileContent);
                 recomputeNeighborFlags();
 
                 // --- Console diagnostic dump ---
@@ -1168,6 +1169,66 @@
         // obsStore: flat array of every raw observation, populated by parseTraversePoints.
         // Each entry: { oldName, x(E), y(N), z(elev or null), desc, type('sp'|'ss'), setupOcc }
         let obsStore = [];
+
+        // traverseOrder: point old-names in first-appearance field order.
+        // Built by buildTraverseOrder() on file load and after every reprocess.
+        // SP/GPS records not referenced by any traverse record are appended at the end.
+        let traverseOrder = [];
+
+        // Walk the raw file and return point names in first-appearance order.
+        // OC→OP, BK→BP, SS/FD→FP are traverse records.
+        // SP/GPS→PN records that appear during the traverse walk are included in sequence;
+        // any SP/GPS names never referenced by a traverse record are appended at the end.
+        function buildTraverseOrder(content) {
+            const lines = content.split('\n');
+            const seen = new Set();
+            const ordered = [];
+            const spNames = []; // SP/GPS names in file order, for tail append
+
+            function addName(name) {
+                if (!name || seen.has(name)) return;
+                seen.add(name);
+                ordered.push(name);
+            }
+
+            lines.forEach(line => {
+                line = line.trim();
+
+                if (line.startsWith('OC,')) {
+                    const m = line.match(/,OP([A-Za-z0-9]+)/);
+                    if (m) addName(m[1]);
+                    return;
+                }
+                if (line.startsWith('BK,') || line.startsWith('BD,')) {
+                    const m = line.match(/,BP([A-Za-z0-9]+)/);
+                    if (m) addName(m[1]);
+                    return;
+                }
+                if (line.startsWith('SS,') || line.startsWith('FD,')) {
+                    const m = line.match(/,FP([A-Za-z0-9]+),/);
+                    if (m) addName(m[1]);
+                    return;
+                }
+                if (line.startsWith('SP,') || line.startsWith('GPS,') || line.startsWith('GS,')) {
+                    const m = line.match(/,PN([A-Za-z0-9]+)/);
+                    if (!m) return;
+                    const name = m[1];
+                    addName(name); // adds if first time seen in traverse flow
+                    if (!spNames.includes(name)) spNames.push(name); // track for tail check
+                    return;
+                }
+            });
+
+            // Append any SP/GPS names not yet seen (pure GPS points with no traverse reference)
+            spNames.forEach(name => {
+                if (!seen.has(name)) {
+                    seen.add(name);
+                    ordered.push(name);
+                }
+            });
+
+            return ordered;
+        }
 
         function parseTraversePoints(content, nezSeed) {
             const lines = content.split('\n');
@@ -1959,16 +2020,19 @@
         }
 
         function openModal(clickedPoint) {
-            // Rebuild sorted navigation list by current new name using natural sort
-            modalSortedPoints = [...traversePoints].sort((a, b) => {
-                const na = naturalSortKey(getNewName(a.name));
-                const nb = naturalSortKey(getNewName(b.name));
-                if (na < nb) return -1;
-                if (na > nb) return  1;
-                // tiebreak by old name
-                const oa = naturalSortKey(a.name);
-                const ob = naturalSortKey(b.name);
-                return oa < ob ? -1 : oa > ob ? 1 : 0;
+            // Build navigation list in first-appearance traverse order.
+            // traverseOrder contains old names in field order; map each to its traversePoint.
+            // Points not in traverseOrder (shouldn't happen) fall to the end.
+            const tpByOldName = {};
+            traversePoints.forEach(p => { tpByOldName[p.name] = p; });
+
+            modalSortedPoints = [];
+            traverseOrder.forEach(oldName => {
+                if (tpByOldName[oldName]) modalSortedPoints.push(tpByOldName[oldName]);
+            });
+            // Append any traversePoints not captured in traverseOrder (safety net)
+            traversePoints.forEach(p => {
+                if (!modalSortedPoints.includes(p)) modalSortedPoints.push(p);
             });
             const foundIdx = modalSortedPoints.findIndex(p => p.name === clickedPoint.name);
             if (foundIdx !== -1) {
@@ -2213,6 +2277,7 @@
             const savedPanX  = plotCanvas._panX;
             const savedPanY  = plotCanvas._panY;
             traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
+            traverseOrder = buildTraverseOrder(fileContent);
             recomputeNeighborFlags();
             // Restore pan/zoom so the view doesn't jump
             plotCanvas._viewInit = savedViewInit;
