@@ -844,8 +844,14 @@
 
         pointSelector.addEventListener('change', () => {
             const selectedPoint = pointSelector.value;
+            if (!selectedPoint) return;
             const pointEntry = pointData.find(([oldName]) => oldName === selectedPoint);
             newPointNameInput.value = pointEntry ? pointEntry[1] : selectedPoint;
+            // Open modal at this point if traverse data is loaded
+            if (traversePoints && traversePoints.length > 0) {
+                const tp = traversePoints.find(p => p.name === selectedPoint);
+                if (tp) openModal(tp);
+            }
         });
 
         dropZone.addEventListener('click', () => fileInput.click());
@@ -949,13 +955,13 @@
                 fileContents.textContent = fileContent;
 
                 const pointNames = extractAllPointNames(fileContent);
-                populatePointDropdown(pointNames);
                 pointData = pointNames.map((point) => [point, point]);
                 updateGrid();
 
                 traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
                 traverseOrder = buildTraverseOrder(fileContent);
                 recomputeNeighborFlags();
+                populatePointDropdown(pointNames);
 
                 // --- Console diagnostic dump ---
                 console.log('=== RW5 Parse Results ===');
@@ -1047,15 +1053,29 @@
         }
 
         function populatePointDropdown(points) {
-            sortedPoints = points.sort((a, b) =>
-                a.localeCompare(b, undefined, { numeric: true })
-            );
+            // Order depends on navOrder mode
+            let ordered;
+            if (navOrder === 'traverse' && traverseOrder.length > 0) {
+                // Traverse: follow traverseOrder, append any not in it
+                const inOrder = traverseOrder.filter(n => points.includes(n));
+                const remainder = points.filter(n => !inOrder.includes(n))
+                    .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+                ordered = [...inOrder, ...remainder];
+            } else {
+                ordered = [...points].sort((a, b) =>
+                    a.localeCompare(b, undefined, { numeric: true })
+                );
+            }
+            sortedPoints = ordered;
 
-            pointSelector.innerHTML = '<option value="">Select a Point</option>';
+            pointSelector.innerHTML = '';
             sortedPoints.forEach((point) => {
                 const option = document.createElement('option');
                 option.value = point;
-                option.textContent = point;
+                // Show new name alongside old name if renamed
+                const entry = pointData.find(([old]) => old === point);
+                const newName = entry ? entry[1] : point;
+                option.textContent = newName !== point ? `${point} → ${newName}` : point;
                 pointSelector.appendChild(option);
             });
 
@@ -1907,9 +1927,20 @@
 
         const navOrderBtn = document.getElementById('navOrderBtn');
         navOrderBtn.addEventListener('click', () => {
+            if (!traversePoints || traversePoints.length === 0) {
+                showToast('Load an RW5 file first.');
+                return;
+            }
             navOrder = navOrder === 'traverse' ? 'numerical' : 'traverse';
             navOrderBtn.textContent = navOrder === 'traverse' ? 'TRAVERSE' : 'NUMERICAL';
             navOrderBtn.classList.toggle('numerical', navOrder === 'numerical');
+            // Repopulate dropdown in new order
+            const allOldNames = pointData.map(([old]) => old);
+            populatePointDropdown(allOldNames);
+            // Open modal at first point in new order
+            const firstOldName = sortedPoints[0];
+            const firstTp = traversePoints.find(p => p.name === firstOldName);
+            if (firstTp) openModal(firstTp);
         });
 
         // Sorted list of traversePoint indices for Prev/Next navigation
