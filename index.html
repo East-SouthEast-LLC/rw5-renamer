@@ -2151,8 +2151,8 @@
             // Search from the AVERAGE of all SP observations for the clicked point
             // (not just the clicked point's single position) so that TS-computed
             // observations nearby don't fall outside tolerance due to SP/TS offset.
-            // Step 1: find all obsStore entries that share the clicked point's old name
-            //         or whose TS position is very close (2x radius) to the clicked point
+            // Gather all obsStore entries for this point.
+            // Step 1: entries matching by old name (always included) or within 4x radius
             const broadNearby = obsStore.filter(o => {
                 const dx = o.x - clickedPoint.x;
                 const dy = o.y - clickedPoint.y;
@@ -2162,8 +2162,9 @@
             // Step 2: compute centroid of the broad set
             const centX = broadNearby.reduce((s, o) => s + o.x, 0) / (broadNearby.length || 1);
             const centY = broadNearby.reduce((s, o) => s + o.y, 0) / (broadNearby.length || 1);
-            // Step 3: filter from centroid with normal radius
+            // Step 3: include entries within normal radius OR matching by old name
             const nearby = obsStore.filter(o => {
+                if (o.oldName === clickedPoint.name) return true;
                 const dx = o.x - centX;
                 const dy = o.y - centY;
                 return Math.sqrt(dx * dx + dy * dy) <= getPopupRadius();
