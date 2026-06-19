@@ -958,6 +958,27 @@
 
                 const pointNames = extractAllPointNames(fileContent);
                 pointData = pointNames.map((point) => [point, point]);
+
+                // Restore any existing rename log from the file header
+                const logHeaderIdx = fileContent.indexOf('-- Old Point Name, New Point Name');
+                if (logHeaderIdx !== -1) {
+                    const logStart = fileContent.indexOf('\n', logHeaderIdx) + 1;
+                    // Find where the log ends (first non-comment line)
+                    const logSection = fileContent.substring(logStart);
+                    const logLines = logSection.split('\n');
+                    for (const rawLine of logLines) {
+                        const line = rawLine.replace(/\r/g, '').trim();
+                        if (!line.startsWith('--')) break; // end of log block
+                        const parts = line.substring(2).split(',');
+                        if (parts.length !== 2) continue;
+                        const oldName = parts[0].trim();
+                        const newName = parts[1].trim();
+                        if (!oldName || !newName || newName === oldName) continue;
+                        const entry = pointData.find(([o]) => o === oldName);
+                        if (entry) entry[1] = newName;
+                    }
+                }
+
                 updateGrid();
 
                 traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
