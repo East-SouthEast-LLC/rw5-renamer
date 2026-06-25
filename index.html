@@ -1386,11 +1386,13 @@
                     }
                     if (line.startsWith('BK,')) {
                         const parts = line.split(',');
-                        // Seed p15occ from BK's OP field if no OC record preceded it
+                        // BK always defines occupied point — update unconditionally (no OC in Survey Pro files)
                         if (parts[1] && parts[1].startsWith('OP')) {
                             const bkOcc = parts[1].substring(2).trim();
-                            if (!p15occ) p15occ = bkOcc;
-                            // If OC was missing but SP has coords, that's fine — coordMap already has it
+                            if (bkOcc !== p15occ) {
+                                p15occ = bkOcc;
+                                p15bsAz = null;
+                            }
                         }
                         const bsM = line.match(/,BS([\d.]+)/);
                         if (bsM) p15bsAz = dmsToRad(parseFloat(bsM[1]));
@@ -1489,10 +1491,11 @@
                 // BK / BD — backsight
                 if (line.startsWith('BK,') || line.startsWith('BD,')) {
                     const parts = line.split(',');
-                    // Seed occName from BK's OP field if no OC record preceded this setup
+                    // BK always defines the occupied point (OP) — update unconditionally.
+                    // Files with no OC records rely entirely on BK for setup changes.
                     if (line.startsWith('BK,') && parts[1] && parts[1].startsWith('OP')) {
                         const bkOcc = parts[1].substring(2).trim();
-                        if (!occName) {
+                        if (bkOcc !== occName) {
                             occName = bkOcc;
                             bsAzimuth = null;
                         }
