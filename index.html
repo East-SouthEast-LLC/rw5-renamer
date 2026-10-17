@@ -1618,7 +1618,11 @@
             // --- Collapse obsStore into one averaged marker per original point name ---
             // SP/GPS observations are tracked separately — if present they win over TS-computed coords
             const accumulator = {}; // oldName -> { xs, ys, zs, desc, type, spX, spY, spZ }
-            obsStore.forEach(({ oldName, x, y, z, desc, type }) => {
+            obsStore.forEach(obs => {
+                const { oldName, x, y, desc, type } = obs;
+                // 2D shots (90° zenith, no HI/HR, or NE code) keep their N/E but their
+                // computed Z is meaningless, so leave it out of the elevation average
+                const z = obsIs2D(obs) ? null : obs.z;
                 if (!accumulator[oldName]) {
                     accumulator[oldName] = { xs: [], ys: [], zs: [], desc, type,
                                              spX: null, spY: null, spZ: null };
@@ -2258,7 +2262,7 @@
             // Compute average N, E, Z of all nearby observations
             const avgN = nearby.reduce((s, o) => s + o.y, 0) / nearby.length;
             const avgE = nearby.reduce((s, o) => s + o.x, 0) / nearby.length;
-            const zObs = nearby.filter(o => o.z !== null);
+            const zObs = nearby.filter(o => o.z !== null && !obsIs2D(o)); // 2D Z excluded
             const avgZ = zObs.length > 0 ? zObs.reduce((s, o) => s + o.z, 0) / zObs.length : null;
 
             // Resolve current display name for each observation
