@@ -1079,8 +1079,10 @@
             // Order depends on navOrder mode
             let ordered;
             if (navOrder === 'traverse' && traverseOrder.length > 0) {
-                const inOrder = traverseOrder.filter(n => points.includes(n));
-                const remainder = points.filter(n => !inOrder.includes(n))
+                const pointSet = new Set(points);
+                const inOrder = traverseOrder.filter(n => pointSet.has(n));
+                const inOrderSet = new Set(inOrder);
+                const remainder = points.filter(n => !inOrderSet.has(n))
                     .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
                 ordered = [...inOrder, ...remainder];
             } else if (navOrder === 'goto') {
@@ -1132,7 +1134,7 @@
                 const group = entriesForName(selEntry[1]);
                 group.forEach(e => { e[1] = newPointName; });
                 const groupOld = new Set(group.map(e => e[0]));
-                updateGrid();
+                deferViewRefresh('grid');
                 reprocessAndRedraw();
 
                 // Advance to the next point in list order, skipping this group's members
@@ -1200,8 +1202,9 @@
         }
 
         function refreshViewport() {
+            const newNames = new Set(pointData.map(([, newName]) => newName));
             const highlightedContent = fileContent.replace(/,([A-Za-z0-9]+),/g, (match, p1) => {
-                if (pointData.some(([_, newName]) => newName === p1)) {
+                if (newNames.has(p1)) {
                     return `<span class="highlight">${match}</span>`;
                 }
                 return match;
@@ -1212,7 +1215,19 @@
         // --- Grid ---
 
         function updateGrid() {
-            gridBody.innerHTML = "";
+            const rows = gridBody.rows;
+            if (rows.length === pointData.length) {
+                // Same points, just new names: touch only the cells that changed
+                for (let i = 0; i < pointData.length; i++) {
+                    const [oldName, newName] = pointData[i];
+                    const cells = rows[i].cells;
+                    if (cells[0].textContent !== oldName) cells[0].textContent = oldName;
+                    if (cells[1].textContent !== newName) cells[1].textContent = newName;
+                }
+                return;
+            }
+            // New file / different point list: rebuild off-DOM, insert once
+            const frag = document.createDocumentFragment();
             pointData.forEach(([oldName, newName]) => {
                 const row = document.createElement("tr");
                 const oldCell = document.createElement("td");
@@ -1221,8 +1236,10 @@
                 newCell.textContent = newName;
                 row.appendChild(oldCell);
                 row.appendChild(newCell);
-                gridBody.appendChild(row);
+                frag.appendChild(row);
             });
+            gridBody.innerHTML = "";
+            gridBody.appendChild(frag);
         }
 
         // --- Export ---
@@ -1676,44 +1693,56 @@
         function recomputeNeighborFlags() {
             if (!traversePoints || traversePoints.length === 0) return;
 
-            // Build a map of current display name -> averaged position
+            // Current display name for each original name (one Map lookup, not a list search)
+            const newNameOf = new Map(pointData.map(([oldName, newName]) => [oldName, newName]));
+            const displayOf = p => newNameOf.has(p.name) ? newNameOf.get(p.name) : p.name;
+
+            // Average position per display name
             // (multiple original names may now share a display name after renaming)
-            const nameToPos = {};
+            const sums = new Map();
             traversePoints.forEach(p => {
-                const entry = pointData.find(([oldName]) => oldName === p.name);
-                const displayName = entry ? entry[1] : p.name;
-                if (!nameToPos[displayName]) {
-                    nameToPos[displayName] = { xs: [], ys: [] };
-                }
-                nameToPos[displayName].xs.push(p.x);
-                nameToPos[displayName].ys.push(p.y);
+                const k = displayOf(p);
+                let a = sums.get(k);
+                if (!a) { a = { sx: 0, sy: 0, n: 0 }; sums.set(k, a); }
+                a.sx += p.x; a.sy += p.y; a.n++;
+            });
+            const named = [...sums].map(([name, a]) => ({ name, x: a.sx / a.n, y: a.sy / a.n }));
+
+            // Bucket into PROX_THRESHOLD-sized cells; a neighbor closer than the
+            // threshold can only be in the same or an adjacent cell
+            const cell = PROX_THRESHOLD;
+            const buckets = new Map();
+            const keyOf = (cx, cy) => cx + ',' + cy;
+            named.forEach(pt => {
+                pt.cx = Math.floor(pt.x / cell);
+                pt.cy = Math.floor(pt.y / cell);
+                const k = keyOf(pt.cx, pt.cy);
+                if (!buckets.has(k)) buckets.set(k, []);
+                buckets.get(k).push(pt);
             });
 
-            // Collapse to averaged positions per display name
-            const named = Object.entries(nameToPos).map(([name, { xs, ys }]) => ({
-                name,
-                x: xs.reduce((a, b) => a + b, 0) / xs.length,
-                y: ys.reduce((a, b) => a + b, 0) / ys.length,
-            }));
-
-            // Find which display names have a neighbor
             const flaggedNames = new Set();
-            for (let i = 0; i < named.length; i++) {
-                for (let j = i + 1; j < named.length; j++) {
-                    const dx = named[i].x - named[j].x;
-                    const dy = named[i].y - named[j].y;
-                    if (Math.sqrt(dx * dx + dy * dy) < PROX_THRESHOLD) {
-                        flaggedNames.add(named[i].name);
-                        flaggedNames.add(named[j].name);
+            named.forEach(pt => {
+                if (flaggedNames.has(pt.name)) return;
+                for (let dx = -1; dx <= 1; dx++) {
+                    for (let dy = -1; dy <= 1; dy++) {
+                        const list = buckets.get(keyOf(pt.cx + dx, pt.cy + dy));
+                        if (!list) continue;
+                        for (const other of list) {
+                            if (other === pt) continue;
+                            const ddx = pt.x - other.x, ddy = pt.y - other.y;
+                            if (Math.sqrt(ddx * ddx + ddy * ddy) < PROX_THRESHOLD) {
+                                flaggedNames.add(pt.name);
+                                flaggedNames.add(other.name);
+                            }
+                        }
                     }
                 }
-            }
+            });
 
             // Apply flags back to traversePoints
             traversePoints.forEach(p => {
-                const entry = pointData.find(([oldName]) => oldName === p.name);
-                const displayName = entry ? entry[1] : p.name;
-                p.neighborFlag = flaggedNames.has(displayName);
+                p.neighborFlag = flaggedNames.has(displayOf(p));
             });
         }
 
@@ -2481,22 +2510,43 @@
 
         // Re-run the full parse/trig chain on current renamed content, preserving pan/zoom.
         // Call this after any merge or rename so map coordinates reflect updated point names.
+        // Display-only refreshes (neighbor dots, map, rename grid, raw-text highlight)
+        // run after the browser has painted, so Merge & Next shows the next point
+        // immediately. Repeated calls before the flush coalesce into one pass.
+        const deferredViews = new Set();
+        let deferredPending = false;
+        function deferViewRefresh(...parts) {
+            parts.forEach(p => deferredViews.add(p));
+            if (deferredPending) return;
+            deferredPending = true;
+            const run = () => {
+                deferredPending = false;
+                const todo = new Set(deferredViews);
+                deferredViews.clear();
+                if (todo.has('flags')) recomputeNeighborFlags();
+                if (todo.has('plot'))  redrawPlot();
+                if (todo.has('grid'))  updateGrid();
+                if (todo.has('text'))  refreshViewport();
+            };
+            if (window.requestAnimationFrame) requestAnimationFrame(() => setTimeout(run, 0));
+            else setTimeout(run, 0);
+        }
+
         function reprocessAndRedraw() {
             fileContent = buildRenamedContent();
-            refreshViewport();
             const savedViewInit = plotCanvas._viewInit;
             const savedZoom  = plotCanvas._zoom;
             const savedPanX  = plotCanvas._panX;
             const savedPanY  = plotCanvas._panY;
             traversePoints = parseTraversePoints(fileContent, nezData.length > 0 ? nezData : null);
             traverseOrder = buildTraverseOrder(fileContent);
-            recomputeNeighborFlags();
             // Restore pan/zoom so the view doesn't jump
             plotCanvas._viewInit = savedViewInit;
             plotCanvas._zoom  = savedZoom;
             plotCanvas._panX  = savedPanX;
             plotCanvas._panY  = savedPanY;
-            redrawPlot();
+            // Names/coords above are needed now (next point, nav list); the rest can wait a frame
+            deferViewRefresh('flags', 'plot', 'text');
         }
 
         // Resolve the current merge target name — from dropdown or inline text input
@@ -2546,7 +2596,7 @@
             // Apply NEZ renames for checked NEZ rows
             applyNezRenames(targetName);
 
-            updateGrid();
+            deferViewRefresh('grid');
             reprocessAndRedraw(); // full re-parse so map coords reflect merged names
             return changed;
         }
