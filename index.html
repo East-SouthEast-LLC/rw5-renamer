@@ -2000,12 +2000,46 @@
 
         // Show inline text input when -- New -- is selected
         // Also update New Name cells in the RW5 table to reflect the dropdown choice
+        // Current merge target shown in the RW5 New Name column
+        let rw5PreviewName = '';
+
+        // Old names a merge would rename — single source of truth for doMerge,
+        // the New Name preview, and description gathering.
+        // Rules: checked rows only; if rows have no checkboxes at all (all-2D point),
+        // every row is included. Returns an empty Set if boxes exist but none are checked.
+        function getMergeOldNames() {
+            const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
+            const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
+            if (checked.length === 0) {
+                if (modalTableBody.querySelector('.obs-check')) return new Set();
+                return new Set(rows.map(r => r.cells[1].textContent).filter(Boolean));
+            }
+            return new Set(
+                checked.map(cb => {
+                    const row = rows[parseInt(cb.dataset.idx)];
+                    return row ? row.cells[1].textContent : null;
+                }).filter(Boolean)
+            );
+        }
+
+        // Show the target name only on rows that will actually be renamed;
+        // everything else shows its current name.
+        function refreshRW5NewNameCells() {
+            const mergeSet = getMergeOldNames();
+            modalTableBody.querySelectorAll('tr:not(.avg-row)').forEach(tr => {
+                const cell = tr.querySelector('.rw5-new-name');
+                if (!cell) return;
+                const willRename = rw5PreviewName && mergeSet.has(tr.cells[1].textContent);
+                cell.textContent = willRename ? rw5PreviewName : cell.dataset.orig;
+                cell.style.fontWeight = willRename ? '600' : '';
+                cell.style.color = willRename ? '' : '#9E9E9E';
+            });
+        }
+
         function updateRW5NewNameCells(name) {
             if (!name) return;
-            // Update RW5 New Name cells
-            document.querySelectorAll('#modalTableBody .rw5-new-name').forEach(cell => {
-                cell.textContent = name;
-            });
+            rw5PreviewName = name;
+            refreshRW5NewNameCells();
             // Update NEZ New Name cells (checked rows only — unchecked show old name)
             document.querySelectorAll('#modalNezTableBody .nez-new-name').forEach(cell => {
                 const cb = cell.closest('tr').querySelector('.nez-check');
@@ -2015,6 +2049,31 @@
                 }
             });
         }
+
+        // RW5 row checkbox toggled: rows sharing an old name are one point and
+        // rename together, so keep their boxes in sync, then refresh the preview.
+        modalTableBody.addEventListener('change', function(e) {
+            const cb = e.target;
+            if (!cb.classList || !cb.classList.contains('obs-check')) return;
+            const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
+            const row = rows[parseInt(cb.dataset.idx)];
+            const oldName = row ? row.cells[1].textContent : null;
+            let linked = 0;
+            if (oldName) {
+                modalTableBody.querySelectorAll('.obs-check').forEach(other => {
+                    if (other === cb) return;
+                    const r = rows[parseInt(other.dataset.idx)];
+                    if (r && r.cells[1].textContent === oldName) {
+                        other.checked = cb.checked;
+                        linked++;
+                    }
+                });
+            }
+            modalStatus.textContent = linked
+                ? `${oldName}: all ${linked + 1} shots are one point — they move together.`
+                : '';
+            refreshRW5NewNameCells();
+        });
 
         mergeNameSelect.addEventListener('change', function() {
             const mergeNewNameInput = document.getElementById('mergeNewNameInput');
@@ -2218,6 +2277,7 @@
 
             // Build table rows
             modalTableBody.innerHTML = '';
+            rw5PreviewName = '';
             withNames.forEach((o, i) => {
                 const dN  = o.y - avgN;
                 const dE  = o.x - avgE;
@@ -2241,7 +2301,7 @@
                 tr.innerHTML = `
                     <td style="text-align:center">${checkOrWarn}</td>
                     <td class="name-cell">${o.oldName}</td>
-                    <td class="name-cell rw5-new-name">${o.newName}</td>
+                    <td class="name-cell rw5-new-name" data-orig="${o.newName}">${o.newName}</td>
                     <td>${fmt(o.y, 4)}</td>
                     <td>${fmt(o.x, 4)}</td>
                     <td>${fmt(o.z, 4)}</td>
@@ -2432,26 +2492,9 @@
                 return -1;
             }
 
-            const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
-            const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
-
-            // For all-2D points there are no checkboxes — use all visible rows
-            let checkedOldNames;
-            if (checked.length === 0) {
-                const anyCheckbox = modalTableBody.querySelector('.obs-check');
-                if (anyCheckbox) return 0; // has checkboxes but none checked
-                // All-2D: use all non-avg rows
-                checkedOldNames = new Set(
-                    [...rows].map(row => row.cells[1].textContent).filter(Boolean)
-                );
-            } else {
-                checkedOldNames = new Set(
-                    checked.map(cb => {
-                        const row = rows[parseInt(cb.dataset.idx)];
-                        return row ? row.cells[1].textContent : null;
-                    }).filter(Boolean)
-                );
-            }
+            // Same selection rules as the New Name preview (see getMergeOldNames)
+            const checkedOldNames = getMergeOldNames();
+            if (checkedOldNames.size === 0) return 0; // has checkboxes but none checked
 
             let changed = 0;
             pointData.forEach(entry => {
@@ -2909,7 +2952,7 @@
             descSelect.innerHTML = unique
                 .map(d => `<option value="${d}">${d}</option>`)
                 .join('');
-            // Pre-fill custom with first/only value
+            // Custom field starts blank; Apply falls back to the dropdown selection
             descCustom.value = '';
             descOverlay.classList.add('active');
             descCustom.focus();
@@ -2939,14 +2982,15 @@
             descCustom.value = descSelect.value;
         });
 
-        // Gather descriptions from currently checked RW5 rows
+        // Gather descriptions from the RW5 rows the merge will rename
+        // (same rule as doMerge, so all-2D points contribute their descriptions too)
         function getCheckedDescs() {
-            const checked = [...modalTableBody.querySelectorAll('.obs-check:checked')];
+            const mergeSet = getMergeOldNames();
             const rows = [...modalTableBody.querySelectorAll('tr:not(.avg-row)')];
-            return checked.map(cb => {
-                const row = rows[parseInt(cb.dataset.idx)];
-                return row ? row.cells[9].textContent.replace('—','').trim() : '';
-            }).filter(Boolean);
+            return rows
+                .filter(row => mergeSet.has(row.cells[1].textContent))
+                .map(row => row.cells[9].textContent.replace('—','').trim())
+                .filter(Boolean);
         }
 
         // Apply a description to all pointData entries matching the target name
@@ -2978,7 +3022,8 @@
             }
         }
 
-        async function doMergeWithDesc(andNext) {
+        // forceDialog: Shift+click always opens the dialog, even for a single description
+        async function doMergeWithDesc(andNext, forceDialog) {
             // Gather descs BEFORE merge changes names
             const descs = getCheckedDescs();
             const nextPoint = andNext && currentModalIndex < modalSortedPoints.length - 1
@@ -2993,8 +3038,16 @@
 
             const targetName = getMergeTarget();
 
-            // Open description dialog
-            const chosenDesc = await openDescDialog(descs);
+            // One unique description → apply it without asking.
+            // None or several → open the dialog so the user can choose or type.
+            const uniqueDescs = [...new Set(descs)];
+            let chosenDesc;
+            if (uniqueDescs.length === 1 && !forceDialog) {
+                chosenDesc = uniqueDescs[0];
+                showToast(`Desc: ${chosenDesc}  (Shift+click to choose)`, 1500);
+            } else {
+                chosenDesc = await openDescDialog(descs);
+            }
             if (chosenDesc !== null) {
                 applyDescription(targetName, chosenDesc);
                 refreshViewport();
@@ -3015,8 +3068,10 @@
             }
         }
 
-        modalMergeDescBtn.addEventListener('click', () => doMergeWithDesc(false));
-        modalMergeDescNextBtn.addEventListener('click', () => doMergeWithDesc(true));
+        modalMergeDescBtn.addEventListener('click', e => doMergeWithDesc(false, e.shiftKey));
+        modalMergeDescNextBtn.addEventListener('click', e => doMergeWithDesc(true, e.shiftKey));
+        modalMergeDescBtn.title     = 'Merge + set description (Shift+click to always choose)';
+        modalMergeDescNextBtn.title = 'Merge + description + next (Shift+click to always choose)';
 
         // Canvas click — find nearest point and open modal
         plotCanvas.addEventListener('click', (e) => {
