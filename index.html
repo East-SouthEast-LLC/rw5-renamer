@@ -1126,17 +1126,29 @@
                 return;
             }
 
-            const pointIndex = pointData.findIndex((point) => point[0] === selectedPoint);
-            if (pointIndex !== -1) {
-                pointData[pointIndex][1] = newPointName;
+            const selEntry = pointData.find((point) => point[0] === selectedPoint);
+            if (selEntry) {
+                // Rename every original name that is currently the same point
+                const group = entriesForName(selEntry[1]);
+                group.forEach(e => { e[1] = newPointName; });
+                const groupOld = new Set(group.map(e => e[0]));
                 updateGrid();
                 reprocessAndRedraw();
 
-                currentIndex = (pointIndex + 1) % sortedPoints.length;
+                // Advance to the next point in list order, skipping this group's members
+                const here = sortedPoints.indexOf(selectedPoint);
+                let next = -1;
+                for (let k = 1; k <= sortedPoints.length; k++) {
+                    const cand = sortedPoints[(here + k) % sortedPoints.length];
+                    if (!groupOld.has(cand)) { next = (here + k) % sortedPoints.length; break; }
+                }
+                if (next === -1) next = here;
+                currentIndex = next;
                 pointSelector.value = sortedPoints[currentIndex];
                 const nextEntry = pointData.find(([old]) => old === sortedPoints[currentIndex]);
                 newPointNameInput.value = nextEntry ? nextEntry[1] : sortedPoints[currentIndex];
                 newPointNameInput.select();
+                if (group.length > 1) showToast(`${group.length} merged names → ${newPointName}`, 1500);
             }
         }
 
@@ -2185,6 +2197,13 @@
             return s.replace(/\d+/g, n => n.padStart(10, '0'));
         }
 
+        // A "point" is everything that currently shares one name. After a merge,
+        // several original names (A5, A10, A15) map to one new name (FU101).
+        // Match on the current name, and on the original name for entries not yet re-parsed.
+        function entriesForName(name) {
+            return pointData.filter(e => e[1] === name || e[0] === name);
+        }
+
         function getNewName(oldName) {
             const e = pointData.find(([o]) => o === oldName);
             return e ? e[1] : oldName;
@@ -2501,8 +2520,10 @@
             if (checkedOldNames.size === 0) return 0; // has checkboxes but none checked
 
             let changed = 0;
+            // Table names are current names, so match whole groups — this lets an
+            // already-renamed point (FU101 = A5/A10/A15) be merged or renamed again
             pointData.forEach(entry => {
-                if (checkedOldNames.has(entry[0])) {
+                if (checkedOldNames.has(entry[1]) || checkedOldNames.has(entry[0])) {
                     entry[1] = targetName;
                     changed++;
                 }
@@ -2857,12 +2878,18 @@
                     return ka < kb ? -1 : ka > kb ? 1 : 0;
                 });
                 var counter = start;
+                var assigned = {}; // current name -> new number, so merged names stay together
                 return sorted.map(function(entry) {
                     var oldName = entry[0];
-                    var tp = traversePoints.find(function(p) { return p.name === oldName; });
-                    var hasNoZ = tp ? tp.z === null : false;
-                    var suffix = (useN && hasNoZ) ? 'N' : '';
-                    return { oldName: oldName, newName: prefix + counter++ + suffix };
+                    var cur = entry[1] || oldName;
+                    if (assigned[cur] === undefined) {
+                        // traversePoints carry current names after any rename
+                        var tp = traversePoints.find(function(p) { return p.name === cur || p.name === oldName; });
+                        var hasNoZ = tp ? tp.z === null : false;
+                        var suffix = (useN && hasNoZ) ? 'N' : '';
+                        assigned[cur] = prefix + counter++ + suffix;
+                    }
+                    return { oldName: oldName, newName: assigned[cur] };
                 });
             }
 
@@ -2932,7 +2959,9 @@
                 });
                 updateGrid();
                 if (traversePoints && traversePoints.length > 0) { reprocessAndRedraw(); }
-                statusEl.textContent = 'Renumbered ' + map.length + ' point' + (map.length !== 1 ? 's' : '') + '.';
+                var nPts = new Set(map.map(function(r) { return r.newName; })).size;
+                statusEl.textContent = 'Renumbered ' + nPts + ' point' + (nPts !== 1 ? 's' : '') +
+                    (nPts !== map.length ? ' (' + map.length + ' original names)' : '') + '.';
                 statusEl.style.color = '#2a7a2a';
                 updatePreview();
             });
