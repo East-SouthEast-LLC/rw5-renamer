@@ -1156,15 +1156,18 @@
             // Always start from the original file so corrections always win
             let updatedContent = originalFileContent;
 
-            // Apply name renames
+            // Apply name renames in ONE pass over the original names.
+            // Sequential replaces could chain (A5→A10 then A10→FU1 turns A5 into FU1)
+            // and silently collapse two points; a single lookup can't.
+            const renameMap = {};
             pointData.forEach(([oldName, newName]) => {
-                if (newName && newName !== oldName) {
-                    [',PN', ',OP', ',BP', ',FP'].forEach((code) => {
-                        const regex = new RegExp(`${code}${oldName},`, 'g');
-                        updatedContent = updatedContent.replace(regex, `${code}${newName},`);
-                    });
-                }
+                if (newName && newName !== oldName) renameMap[oldName] = newName;
             });
+            if (Object.keys(renameMap).length > 0) {
+                // Lookahead keeps the trailing comma available for the next token (",OPA1,BPA2,")
+                updatedContent = updatedContent.replace(/,(PN|OP|BP|FP)([^,\r\n]+)(?=,)/g,
+                    (match, code, name) => renameMap[name] !== undefined ? `,${code}${renameMap[name]}` : match);
+            }
 
             // Apply description changes line by line using original oldNames
             if (Object.keys(descChanges).length > 0) {
